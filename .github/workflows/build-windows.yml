@@ -1,0 +1,40 @@
+name: Build Windows exe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyxel pygame websockets pyinstaller
+
+      - name: Build exe
+        run: |
+          pyinstaller --noconfirm --windowed --onefile --name HighwayRacer ^
+            --add-data "car.png;." ^
+            --add-data "cloud.png;." ^
+            --add-data "title.png;." ^
+            main.py
+        shell: cmd
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HighwayRacer-windows
+          path: dist/HighwayRacer.exe
