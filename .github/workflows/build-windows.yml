@@ -25,12 +25,7 @@ jobs:
           pip install pyxel pygame websockets pyinstaller
 
       - name: Build exe
-        run: |
-          pyinstaller --noconfirm --windowed --onefile --name HighwayRacer ^
-            --add-data "subprograms/car.png;subprograms"
-            --add-data "subprograms/cloud.png;subprograms"
-            --add-data "subprograms/title.png;subprograms"
-            main.py
+        run: pyinstaller --noconfirm --windowed --onefile --name HighwayRacer --add-data "subprograms/car.png;subprograms" --add-data "subprograms/cloud.png;subprograms" --add-data "subprograms/title.png;subprograms" main.py
         shell: cmd
 
       - name: Upload artifact
