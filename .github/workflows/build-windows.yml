@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyxel pygame websockets pyinstaller
+          pip install pyxel pygame "websockets<14" pyinstaller
 
       - name: Build exe
         run: pyinstaller --noconfirm --onefile --name HighwayRacer --hidden-import websockets --collect-all websockets --add-data "subprograms;subprograms" main.py
