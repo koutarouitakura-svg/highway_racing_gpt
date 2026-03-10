@@ -131,6 +131,16 @@ class PlayerProgressionMixin:
                 pass
             self.xp_anim_level_sound_cooldown = 8
 
+    def can_exit_goal_results(self):
+        if not getattr(self, 'is_goal', False):
+            return True
+        if getattr(self, 'is_time_attack', False):
+            return True
+        reward_done = getattr(self, 'prize_anim_phase', 0) >= 3
+        xp_pending = getattr(self, 'pending_goal_xp', 0) > 0
+        xp_done = not getattr(self, 'xp_anim_active', False) and not xp_pending
+        return reward_done and xp_done
+
     def _grant_session_distance_xp_now(self):
         if getattr(self, 'session_xp_awarded', False):
             return 0

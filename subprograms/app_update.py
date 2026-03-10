@@ -272,9 +272,13 @@ class AppUpdateMixin(PlayerProgressionMixin):
                     self.time_sel_focus = 0; self._start_fade(self.STATE_TIME_SELECT); pyxel.play(1, 2)
                 if (pyxel.btnp(pyxel.KEY_ESCAPE) or self._vjoy_esc):
                     self._start_fade(self.STATE_MODE_SELECT); pyxel.play(1, 1)
-                # [E] コースメーカーへ
+                # [E] コースメーカーへ（LV50で解放）
                 if pyxel.btnp(pyxel.KEY_E) or self._vjoy_e:
-                    self._maker_reset(); self._start_fade(self.STATE_COURSE_MAKER); pyxel.play(1, 1)
+                    maker_unlock_lv = getattr(self, "MAX_PLAYER_LEVEL", 50)
+                    if self.stats.get("player_level", 0) >= maker_unlock_lv:
+                        self._maker_reset(); self._start_fade(self.STATE_COURSE_MAKER); pyxel.play(1, 1)
+                    else:
+                        pyxel.play(1, 3)
                 # [DEL] 削除確認
                 if (pyxel.btnp(pyxel.KEY_DELETE) or pyxel.btnp(pyxel.KEY_BACKSPACE)) \
                         and self.selected_course >= 4:
@@ -297,6 +301,10 @@ class AppUpdateMixin(PlayerProgressionMixin):
                     self._share_msg_timer -= 1
 
             elif self.state == self.STATE_TIME_SELECT:
+                player_level = self.stats.get("player_level", 0)
+                night_unlocked = player_level >= 10
+                if not night_unlocked and self.is_night_mode:
+                    self.is_night_mode = False
                 # フォーカス項目定義:
                 #   0=DAY, 1=NIGHT
                 #   2=EASY, 3=NORMAL, 4=HARD  (レース時のみ)
@@ -370,7 +378,10 @@ class AppUpdateMixin(PlayerProgressionMixin):
                     if kind == "day":
                         self.is_night_mode = False; pyxel.play(1, 1)
                     elif kind == "night":
-                        self.is_night_mode = True; pyxel.play(1, 1)
+                        if night_unlocked:
+                            self.is_night_mode = True; pyxel.play(1, 1)
+                        else:
+                            pyxel.play(1, 1)
                     elif kind == "ghost_on":
                         self.ghost_enabled = True; pyxel.play(1, 1)
                     elif kind == "ghost_off":
@@ -574,10 +585,14 @@ class AppUpdateMixin(PlayerProgressionMixin):
                     if pyxel.btnp(pyxel.KEY_DOWN) or pyxel.btnp(pyxel.KEY_S) or self._vjoy_dn:
                         self.goal_laps = max(1, self.goal_laps - 1); pyxel.play(1, 1)
                         self._online_broadcast_settings()
-                    # N で昼夜切り替え
+                    # N で昼夜切り替え（LV10で解放）
                     if pyxel.btnp(pyxel.KEY_N):
-                        self.is_night_mode = not self.is_night_mode; pyxel.play(1, 1)
-                        self._online_broadcast_settings()
+                        if self.stats.get("player_level", 0) >= 10:
+                            self.is_night_mode = not self.is_night_mode; pyxel.play(1, 1)
+                            self._online_broadcast_settings()
+                        else:
+                            self.is_night_mode = False
+                            pyxel.play(1, 1)
                     # SPACE/ENTER でレース開始
                     if pyxel.btnp(pyxel.KEY_SPACE) or pyxel.btnp(pyxel.KEY_RETURN) or self._vjoy_space:
                         # settings と start を確実に順番送信
@@ -766,8 +781,8 @@ class AppUpdateMixin(PlayerProgressionMixin):
                                 self.online_finish_order.append((pid, msg.get("player_name", self.online_peers.get(pid, {}).get("name", pid[:4].upper()))))
 
                         elif mtype == "lobby_return" and pid and pid != self.online_my_id:
-                            # 相手がロビーに戻った → 自分もロビーに戻る
-                            if self.is_goal:
+                            # 相手がロビーに戻った → 自分も結果画面を閉じられる状態ならロビーへ戻る
+                            if self.is_goal and self.can_exit_goal_results():
                                 pyxel.stop()
                                 self.online_peers   = {}
                                 self._peer_interp   = {}
@@ -1040,7 +1055,14 @@ class AppUpdateMixin(PlayerProgressionMixin):
 
                         if self.boost_cooldown > 0: self.boost_cooldown -= 1
 
-                if (pyxel.btnp(pyxel.KEY_R) or (_HAS_JOY and getattr(self, '_vjoy_space', False))) and self.is_goal:
+                goal_continue_pressed = (
+                    pyxel.btnp(pyxel.KEY_SPACE)
+                    or (_HAS_JOY and getattr(self, '_vjoy_space', False))
+                )
+                if goal_continue_pressed and self.is_goal:
+                    if not self.can_exit_goal_results():
+                        pyxel.play(1, 1)
+                        return
                     pyxel.stop()
                     # オンライン対戦中はロビーに戻る（再戦しやすいように）
                     if self.online_client and self.online_client.connected:
@@ -1783,7 +1805,7 @@ class AppUpdateMixin(PlayerProgressionMixin):
                                     else:
                                         t = (rk - 1) / (total_cars - 1)  # 0.0(1位)〜1.0(最下位)
                                         rank_prizes[rk] = int(1000 * (1 - t) + 50 * t)
-                                prize_diff_mult = [0.5, 0.75, 1.0][self.difficulty]
+                                prize_diff_mult = [0.75, 1.0, 1.5][self.difficulty]
                                 base_prize = int(rank_prizes.get(self.goal_rank, 0) * self.goal_laps * prize_diff_mult)
                                 clean_bonus = int(base_prize * 0.5) if self.collision_count == 0 else 0
                                 self.prize_amount = base_prize

@@ -535,11 +535,12 @@ class AppDrawMixin(PlayerProgressionMixin):
                         pyxel.blt(base_x, base_y, 0, 0, pw, pu, 24, 229,
                                   scale=scale_s)
                         pyxel.pal()   # 1色だけ変えたので pal() でリセットで十分
-                        # IDラベル
+                        # プレイヤー名ラベル
                         if scale_s > 0.25:
-                            lx = int(screen_x) - len(pid[:4]) * 2
+                            disp_name = self._online_display_name(pid, self.online_peers.get(pid), max_chars=8)
+                            lx = int(screen_x) - len(disp_name) * 2
                             ly = int(base_y) - 7
-                            pyxel.text(lx, ly, pid[:4], pcol)
+                            pyxel.text(lx, ly, disp_name, pcol)
 
 
             if self.start_timer > 0:
@@ -600,7 +601,8 @@ class AppDrawMixin(PlayerProgressionMixin):
                         p_prog = pg.get("progress", 0)
                         p_goal = pg.get("is_goal", False)
                         p_score = (p_lap - 1) * n_pts + p_prog
-                        entries.append((pid[:4].upper(), p_score, p_goal,
+                        disp_name = self._online_display_name(pid, pg, max_chars=8)
+                        entries.append((disp_name, p_score, p_goal,
                                         peer_colors[ci % 4]))
 
                     # ゴール済みは最上位、未ゴールはスコア降順
@@ -683,7 +685,8 @@ class AppDrawMixin(PlayerProgressionMixin):
                         xp_text = "MAX" if cur_lv >= self.MAX_PLAYER_LEVEL else f"{cur_xp}/{req_xp}"
                         pyxel.text(bar_x + (bar_w - len(xp_text) * 4) // 2, xp_panel_y + 20, xp_text, 7)
 
-                    pyxel.text(x_txt + 7, pyxel.height / 2 + 8 + 68, "PUSH 'R' TO MENU", 6)
+                    hint_text, hint_col = self._goal_continue_hint(is_online_race=False)
+                    pyxel.text(x_txt + 7, pyxel.height / 2 + 8 + 68, hint_text, hint_col)
 
                 # ── オンライン対戦ゴール順位パネル ──
                 is_online_race = (self.online_client and self.online_client.connected)
@@ -709,17 +712,16 @@ class AppDrawMixin(PlayerProgressionMixin):
                         if is_me:
                             pyxel.rect(px_r - 1, ry - 1, panel_w + 2, row_h, 1)
                             col = 10 if i == 0 else col
-                        disp_name = "YOU" if is_me else label
+                        disp_name = "YOU" if is_me else self._clip_menu_text(label, 10)
                         pyxel.text(px_r + 2, ry, f"{rank_str} {disp_name}", col)
 
                     if not finish_order:
                         pyxel.text(px_r + 2, py_r + 14, "Waiting...", 5)
 
-                    # Rキーでロビーへ戻るヒント
-                    hint = "R: BACK TO LOBBY"
+                    hint, hint_col = self._goal_continue_hint(True)
                     pyxel.text(px_r + (panel_w - len(hint)*4)//2,
                                py_r + panel_h - 4, hint,
-                               10 if (pyxel.frame_count // 15) % 2 == 0 else 7)
+                               hint_col)
                 elif self.is_time_attack:
                     # タイムアタックモード：ベストラップを表示
                     if self.is_new_record:
@@ -794,6 +796,52 @@ class AppDrawMixin(PlayerProgressionMixin):
             if (pyxel.frame_count // 15) % 2 == 0:
                 pyxel.text(pyxel.width/2 - 30, 100, "PUSH SPACE KEY", 7)
 
+        def _clip_menu_text(self, text, max_chars):
+            text = str(text)
+            if max_chars <= 0 or len(text) <= max_chars:
+                return text
+            if max_chars <= 3:
+                return text[:max_chars]
+            return text[:max_chars - 3] + "..."
+
+        def _online_display_name(self, pid, peer_state=None, *, use_you=False, max_chars=None):
+            if use_you and pid == getattr(self, 'online_my_id', ''):
+                label = "YOU"
+            elif pid == getattr(self, 'online_my_id', ''):
+                label = getattr(self, 'online_my_name', '') or getattr(self, 'player_name', '') or "PLAYER"
+            else:
+                state = peer_state if isinstance(peer_state, dict) else getattr(self, 'online_peers', {}).get(pid, {})
+                label = str(state.get('name', '')).strip() if isinstance(state, dict) else ""
+                if not label:
+                    label = pid[:4].upper() if pid else "PLAYER"
+            return self._clip_menu_text(label, max_chars) if max_chars else label
+
+        def _draw_footer_help(self, lines, accent=5, y=None):
+            lines = [self._clip_menu_text(line, 58) for line in lines if line]
+            if not lines:
+                return
+            W, H = pyxel.width, pyxel.height
+            panel_w = min(W - 12, max(len(line) * 4 for line in lines) + 12)
+            panel_h = 8 + len(lines) * 8
+            px = (W - panel_w) // 2
+            py = H - panel_h - 4 if y is None else y
+            pyxel.rect(px, py, panel_w, panel_h, 0)
+            pyxel.rectb(px, py, panel_w, panel_h, accent)
+            for i, line in enumerate(lines):
+                col = 10 if i == 0 else 7
+                tx = px + (panel_w - len(line) * 4) // 2
+                pyxel.text(tx, py + 3 + i * 8, line, col)
+
+        def _goal_continue_hint(self, is_online_race=False):
+            if self.can_exit_goal_results():
+                label = "SPACE: BACK TO LOBBY" if is_online_race else "SPACE: BACK TO MENU"
+                return label, 10 if (pyxel.frame_count // 15) % 2 == 0 else 7
+            if getattr(self, 'prize_anim_phase', 0) < 3:
+                return "COUNTING REWARDS...", 5
+            if getattr(self, 'xp_anim_active', False) or getattr(self, 'pending_goal_xp', 0) > 0:
+                return "WAIT FOR LEVEL UP...", 5
+            return "PLEASE WAIT...", 5
+
         def draw_menu_screen(self):
             W, H = pyxel.width, pyxel.height
             # 背景
@@ -833,8 +881,10 @@ class AppDrawMixin(PlayerProgressionMixin):
                 pyxel.text(px + 20, iy + 2, label, col_draw)
 
             # 操作ヒント
-            pyxel.text((W - 80) // 2, py + panel_h + 6, "W/S: MOVE   SPACE: SELECT", 5)
-            pyxel.text((W - 36) // 2, py + panel_h + 14, "ESC: BACK", 5)
+            self._draw_footer_help([
+                "W/S: MOVE   SPACE: SELECT",
+                "ESC: BACK",
+            ], accent=5)
 
         def draw_options_screen(self):
             W, H = pyxel.width, pyxel.height
@@ -1010,7 +1060,7 @@ class AppDrawMixin(PlayerProgressionMixin):
                 pyxel.line(px + 4, ry + line_h - 3, px + pw - 5, ry + line_h - 3, 1)
 
             # ── フッター ──
-            pyxel.text(W // 2 - 28, H - 12, "ESC: BACK TO MENU", 5)
+            self._draw_footer_help(["ESC: BACK TO MENU"], accent=5)
 
         def draw_mode_select_screen(self):
             cx = pyxel.width // 2 - 90
@@ -1038,11 +1088,70 @@ class AppDrawMixin(PlayerProgressionMixin):
             pyxel.text(cx + 104, cy + 44, "vs Rivals", 6)
             pyxel.text(cx + 102, cy + 54, "Fixed lap count", 5)
 
-            pyxel.text(cx + 20, cy + 74, "A/D: SELECT", 6)
+            self._draw_footer_help([
+                "A/D: SELECT   SPACE: NEXT",
+                "ESC: BACK",
+            ], accent=5)
 
-            blink_col = 10 if (pyxel.frame_count // 15) % 2 == 0 else 7
-            pyxel.text(cx + 90, cy + 74, "SPACE: NEXT", blink_col)
-            pyxel.text(cx + 155, cy + 74, "ESC", 6)
+        def _draw_time_select_course_preview(self):
+            """time_select用: レース開始地点・開始向きの実コース描画を背景に使う"""
+            W, H = pyxel.width, pyxel.height
+            cd = self.COURSES[self.selected_course]
+
+            old_x = getattr(self, 'car_world_x', 0)
+            old_y = getattr(self, 'car_world_y', 0)
+            old_a = getattr(self, 'car_angle', 0.0)
+            old_course = getattr(self, 'selected_course', 0)
+
+            try:
+                self.selected_course = old_course
+
+                start_pos = cd.get('start_pos', (old_x, old_y))
+                self.car_world_x = float(start_pos[0])
+                self.car_world_y = float(start_pos[1])
+
+                start_angle = cd.get('start_angle', None)
+                if start_angle is None:
+                    start_dir = cd.get('start_dir', None)
+                    if isinstance(start_dir, (tuple, list)) and len(start_dir) >= 2:
+                        start_angle = math.atan2(start_dir[1], start_dir[0])
+
+                if start_angle is None:
+                    pts = getattr(self, 'smooth_points', []) or []
+                    if len(pts) >= 2:
+                        sx, sy = self.car_world_x, self.car_world_y
+                        nearest_i = min(range(len(pts)), key=lambda i: (pts[i][0] - sx) ** 2 + (pts[i][1] - sy) ** 2)
+                        p0 = pts[nearest_i]
+                        p1 = pts[(nearest_i + 1) % len(pts)]
+                        if (p1[0] - p0[0]) ** 2 + (p1[1] - p0[1]) ** 2 < 1e-6:
+                            p1 = pts[(nearest_i - 1) % len(pts)]
+                        start_angle = math.atan2(p1[1] - p0[1], p1[0] - p0[0])
+                    else:
+                        cps = cd.get('checkpoints', []) or []
+                        if len(cps) >= 2:
+                            p0 = cps[0]
+                            p1 = cps[1]
+                            start_angle = math.atan2(p1[1] - p0[1], p1[0] - p0[0])
+                        else:
+                            start_angle = old_a
+
+                self.car_angle = float(start_angle)
+
+                sky_color = 16 if self.is_night_mode else 6
+                pyxel.rect(0, 0, W, 80, sky_color)
+                self.draw_mode7_road()
+                self.draw_walls_3d()
+
+                # UIを読みやすくするため上下に薄い幕を敷く
+                for y in range(0, 72, 2):
+                    pyxel.line(0, y, W, y, 1 if self.is_night_mode else 0)
+                for y in range(H - 56, H, 2):
+                    pyxel.line(0, y, W, y, 1 if self.is_night_mode else 0)
+            finally:
+                self.car_world_x = old_x
+                self.car_world_y = old_y
+                self.car_angle = old_a
+                self.selected_course = old_course
 
         def draw_course_select_screen(self):
             W, H = pyxel.width, pyxel.height
@@ -1111,14 +1220,16 @@ class AppDrawMixin(PlayerProgressionMixin):
                 pyxel.text(rx, ry + 47, f"LV {getattr(self, 'MAX_PLAYER_LEVEL', 50)}", 8)
 
             # ── 操作ヒント ──
-            pyxel.text(4, H - 16, "A/D: COURSE", 6)
-            blink_col = 10 if (pyxel.frame_count // 15) % 2 == 0 else 7
-            pyxel.text((W - 72) // 2, H - 10, "SPACE: SELECT", blink_col)
-            pyxel.text(W - 44, H - 16, "ESC: BACK", 5)
+            help_line_1 = "A/D: COURSE   SPACE: SELECT   ESC: BACK"
+            extra_hints = []
             if self.selected_course >= 4:
-                pyxel.text(4, H - 8, "[DEL]:DELETE", 8)
+                extra_hints.append("DEL: DELETE")
             if self.is_time_attack:
-                pyxel.text(W - 56, H - 8, "[R]:RANKING", 9)
+                extra_hints.append("R: RANKING")
+            help_lines = [help_line_1]
+            if extra_hints:
+                help_lines.append("   ".join(extra_hints))
+            self._draw_footer_help(help_lines, accent=5)
 
             # 共有ヒント（右側パネル下）
             pyxel.rect(rx - 2, ry + 64, 60, 34, 0)
@@ -1190,7 +1301,7 @@ class AppDrawMixin(PlayerProgressionMixin):
                     pyxel.text(px + 14, ry + 3, rank_str, col)
                     pyxel.text(px + pw - 6 - len(time_str)*4, ry + 3, time_str, col)
 
-            pyxel.text((W - 60)//2, H - 18, "ESC: BACK TO COURSE SELECT", 5)
+            self._draw_footer_help(["ESC: BACK TO COURSE SELECT"], accent=5)
 
         def draw_online_entry(self):
             """ルーム作成 or 参加入力画面"""
@@ -1258,11 +1369,12 @@ class AppDrawMixin(PlayerProgressionMixin):
                     pyxel.text(8, py, "Select JOIN ROOM then press ENTER", 5)
 
             if self.online_join_active:
-                pyxel.text((W - 44) // 2, H - 10, "ESC: CANCEL", 8)
+                self._draw_footer_help(["ENTER: JOIN   ESC: CANCEL"], accent=10)
             else:
-                pyxel.text((W - 112) // 2, H - 20,
-                           "A/D: SWITCH   ENTER: CONFIRM", 6)
-                pyxel.text((W - 44) // 2, H - 10, "ESC: BACK", 5)
+                self._draw_footer_help([
+                    "A/D: SWITCH   ENTER/SPACE: CONFIRM",
+                    "ESC: BACK",
+                ], accent=5)
 
         def draw_online_lobby(self):
             """ロビー待機画面（ホスト/ゲスト共通）"""
@@ -1299,10 +1411,13 @@ class AppDrawMixin(PlayerProgressionMixin):
             py += 8
             # 自分
             you_col = 10 if self.online_is_host else 11
-            pyxel.text(16, py, f"* {self.online_my_id}  (YOU{'  HOST' if self.online_is_host else ''})", you_col)
+            you_name = self._online_display_name(self.online_my_id, use_you=False, max_chars=12)
+            you_suffix = "  (YOU  HOST)" if self.online_is_host else "  (YOU)"
+            pyxel.text(16, py, f"* {you_name}{you_suffix}", you_col)
             py += 8
             for i, pid in enumerate(list(peers.keys())[:3]):
-                pyxel.text(16, py, f"- {pid}", 6)
+                peer_name = self._online_display_name(pid, peers.get(pid), max_chars=12)
+                pyxel.text(16, py, f"- {peer_name}", 6)
                 py += 8
             py += 4
 
@@ -1310,11 +1425,13 @@ class AppDrawMixin(PlayerProgressionMixin):
             if self.online_is_host:
                 pyxel.rect(6, py, W-12, 46, 0)
                 pyxel.rectb(6, py, W-12, 46, 10)
-                pyxel.text(10, py+2, "RACE SETTINGS  (A/D:course  W/S:laps  N:night)", 10)
+                pyxel.text(10, py+2, "RACE SETTINGS  (A/D:course  W/S:laps)", 10)
                 cd = self.COURSES[self.selected_course]
                 night_str = "NIGHT" if self.is_night_mode else "DAY"
                 pyxel.text(10, py+12, f"Course : {cd['name']}", 7)
                 pyxel.text(10, py+21, f"Laps   : {self.goal_laps}    Time: {night_str}", 7)
+                if self.stats.get("player_level", 0) < 10:
+                    pyxel.text(118, py+21, "[LOCK: LV10]", 8)
                 # コースミニプレビュー（4コース分インジケーター）
                 for ci in range(4):
                     cx_ = 10 + ci * 14
@@ -1347,18 +1464,20 @@ class AppDrawMixin(PlayerProgressionMixin):
                 else:
                     pyxel.text(10, py+12, "Waiting for host settings...", 5)
 
-            pyxel.text(8, H - 8, "ESC: LEAVE ROOM", 5)
+            footer_lines = ["ESC: LEAVE ROOM"]
+            if self.online_is_host:
+                footer_lines.insert(0, "A/D: COURSE   W/S: LAPS")
+                if self.stats.get("player_level", 0) >= 10:
+                    footer_lines.insert(1, "N: DAY/NIGHT")
+                else:
+                    footer_lines.insert(1, "NIGHT MODE LOCKED UNTIL LV 10")
+            self._draw_footer_help(footer_lines, accent=5)
 
         def draw_time_select_screen(self):
             W, H = pyxel.width, pyxel.height
-            if self.is_night_mode:
-                sky_top, sky_bot = 1, 2
-            else:
-                sky_top, sky_bot = 6, 12
-            for y in range(H):
-                t = y / H
-                col = sky_bot if (y % 2 == 0 and t > 0.4) else sky_top
-                pyxel.line(0, y, W, y, col)
+            player_level = self.stats.get("player_level", 0)
+            night_unlocked = player_level >= 10
+            pyxel.rect(0, 0, W, H, 0)
 
             # ── タイトルバー ──
             pyxel.rect(0, 0, W, 14, 1)
@@ -1451,6 +1570,38 @@ class AppDrawMixin(PlayerProgressionMixin):
                     st = "* SELECTED *"
                     pyxel.text(bx_n + (btn_w - len(st)*4)//2, by + btn_h - 11, st, brd_col)
 
+                if night and not night_unlocked:
+                    ov_x = bx_n + 8
+                    ov_y = by + 8
+                    ov_w = btn_w - 16
+                    ov_h = btn_h - 16
+                    pyxel.rect(ov_x, ov_y, ov_w, ov_h, 0)
+                    pyxel.rectb(ov_x, ov_y, ov_w, ov_h, 13)
+                    pyxel.rectb(ov_x + 1, ov_y + 1, ov_w - 2, ov_h - 2, 5)
+
+                    chain_y = ov_y + 9
+                    for cx in range(ov_x + 10, ov_x + ov_w - 10, 12):
+                        pyxel.circb(cx, chain_y, 3, 5)
+                        pyxel.circb(cx + 5, chain_y, 3, 13)
+
+                    lock_cx = bx_n + btn_w // 2
+                    shackle_y = ov_y + 15
+                    pyxel.circb(lock_cx - 5, shackle_y, 5, 10)
+                    pyxel.circb(lock_cx + 5, shackle_y, 5, 10)
+                    pyxel.line(lock_cx - 10, shackle_y, lock_cx - 10, shackle_y + 4, 10)
+                    pyxel.line(lock_cx + 10, shackle_y, lock_cx + 10, shackle_y + 4, 10)
+                    pyxel.rect(lock_cx - 12, shackle_y + 4, 24, 14, 1)
+                    pyxel.rectb(lock_cx - 12, shackle_y + 4, 24, 14, 10)
+                    pyxel.pset(lock_cx, shackle_y + 10, 7)
+                    pyxel.line(lock_cx, shackle_y + 11, lock_cx, shackle_y + 15, 7)
+
+                    banner_w = 52
+                    banner_x = bx_n + (btn_w - banner_w) // 2
+                    banner_y = by + btn_h - 16
+                    pyxel.rect(banner_x, banner_y, banner_w, 9, 8)
+                    pyxel.rectb(banner_x, banner_y, banner_w, 9, 10)
+                    pyxel.text(banner_x + 8, banner_y + 2, "LV10 LOCK", 7)
+
             # ── 難易度選択パネル ──
             dy_top = by + btn_h + 6
 
@@ -1458,7 +1609,7 @@ class AppDrawMixin(PlayerProgressionMixin):
                 DIFF_LABELS = ["EASY", "NORMAL", "HARD"]
                 DIFF_KINDS  = ["easy", "normal", "hard"]
                 DIFF_COLS   = [11, 10, 8]
-                DIFF_DESC   = ["x0.5 Prize", "x0.75 Prize", "x1.0 Prize"]
+                DIFF_DESC   = ["x0.75 Prize", "x1.0 Prize", "x1.5 Prize"]
                 dpw, dph = W - 32, 42
                 dpx = 16
                 pyxel.rect(dpx, dy_top, dpw, dph, 0)
@@ -1599,8 +1750,6 @@ class AppDrawMixin(PlayerProgressionMixin):
                 pyxel.rectb(sbx + 1, sby + 1, sbw - 2, sbh - 2, fc3)
             pyxel.text(sbx + (sbw - len(txt)*4)//2, sby + 5, txt, tc)
 
-            # ── 操作ヒント ──
-            pyxel.text(4, H - 10, "WASD: MOVE   SPACE: SELECT   ESC: BACK", 5)
 
         def draw_customize_screen(self):
             W, H = pyxel.width, pyxel.height
@@ -1632,7 +1781,9 @@ class AppDrawMixin(PlayerProgressionMixin):
             pyxel.text(4, 19, "Q/<", 5)
             pyxel.text(W - 20, 19, "E/>", 5)
 
-            content_y = 32
+            content_y = 40
+            player_level = self.stats.get("player_level", 0)
+            pyxel.text(8, 31, f"PLAYER LV {player_level}", 11)
 
             # ────────────────────────────────────────────────
             # タブ 0: カラー
@@ -1654,8 +1805,6 @@ class AppDrawMixin(PlayerProgressionMixin):
                     is_owned   = (i in owned)
                     is_sel     = (i == self.cust_color_sel)
                     is_equip   = (cd["col"] == self.car_color)
-                    player_level = self.stats.get("player_level", 0)
-                    pyxel.text(8, content_y-28, f"PLAYER LV {player_level}", 11)
                     border_col = 10 if is_sel else (7 if is_equip else 5)
                     pyxel.rectb(sx - 1, sy - 1, swatch_w + 2, swatch_h + 2, border_col)
                     pyxel.rect(sx, sy, swatch_w, swatch_h, cd["col"])
@@ -1672,9 +1821,6 @@ class AppDrawMixin(PlayerProgressionMixin):
                         price_str = f"{cd['price']}CR"
                         pyxel.text(sx + (swatch_w - len(price_str) * 4) // 2, sy + swatch_h + 10, price_str, 9)
 
-                # 操作ヒント
-                pyxel.text(W // 2 - 72, H - 22, "WASD: SELECT   SPACE: BUY/EQUIP", 6)
-                pyxel.text(W // 2 - 40, H - 12, "Q/E: CHANGE TAB", 5)
 
             # ────────────────────────────────────────────────
             # タブ 1/2/3: アップグレード
@@ -1682,7 +1828,6 @@ class AppDrawMixin(PlayerProgressionMixin):
             else:
                 key_map   = {1: "engine_lv", 2: "brake_lv", 3: "weight_lv"}
                 name_map  = {1: "ENGINE", 2: "BRAKE", 3: "WEIGHT"}
-                player_level = self.stats.get("player_level", 0)
                 desc_map  = {
                     1: ["ACCEL UP", "TOP SPEED UP", "HANDLING DOWN"],
                     2: ["BRAKE POWER UP", "", ""],
@@ -1698,7 +1843,6 @@ class AppDrawMixin(PlayerProgressionMixin):
                 # 現在レベル表示
                 cx = W // 2
                 pyxel.text(cx - 40, content_y, f"{name_map[self.cust_tab]}  LV {cur_lv} / 10", 10 if cur_lv == 10 else 7)
-                pyxel.text(8, content_y-28, f"PLAYER LV {player_level}", 11)
 
                 # レベルバー (10マス)
                 bar_x = (W - 102) // 2
@@ -1752,9 +1896,16 @@ class AppDrawMixin(PlayerProgressionMixin):
                         dcol = 8 if "DOWN" in desc else 11
                         pyxel.text(W // 2 - len(desc) * 2, stat_y + 68 + di * 8, desc, dcol)
 
-                # 操作ヒント
+                # 操作ヒント色
                 hint_col = 6 if (cur_lv < 10 and player_level >= req_player_lv) else 5
-                pyxel.text(W // 2 - 48, H - 22, "SPACE/ENTER: UPGRADE", hint_col)
+
+            footer_lines = ["Q/E: CHANGE TAB   ESC: BACK"]
+            if self.cust_tab == 0:
+                footer_lines.insert(0, "WASD: SELECT COLOR   SPACE: BUY/EQUIP")
+            else:
+                footer_lines.insert(0, "SPACE/ENTER/UP: UPGRADE")
+                if self.cust_tab in (1, 2, 3):
+                    footer_lines.append("UPGRADE COSTS SCALE BY LEVEL")
 
             # ── メッセージ ──
             if self.cust_msg_timer > 0:
@@ -1765,7 +1916,7 @@ class AppDrawMixin(PlayerProgressionMixin):
                 pyxel.text(mx, H - 30, self.cust_msg, col)
 
             # ── フッター ──
-            pyxel.text(W // 2 - 28, H - 10, "ESC: BACK TO MENU", 5)
+            self._draw_footer_help(footer_lines, accent=hint_col if self.cust_tab != 0 else 5)
 
         def draw_speedometer(self):
             mx, my = pyxel.width - 30, pyxel.height - 25
