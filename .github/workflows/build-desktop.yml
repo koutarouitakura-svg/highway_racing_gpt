@@ -38,6 +38,7 @@ jobs:
           pyinstaller --noconfirm --clean --onefile --windowed --name HighwayRacer ^
             --hidden-import websockets ^
             --collect-all websockets ^
+            --add-data "subprograms;subprograms" ^
             --add-data "assets;assets" ^
             --add-data "fonts;fonts" ^
             main.py
@@ -71,6 +72,7 @@ jobs:
           pyinstaller --noconfirm --clean --windowed --name HighwayRacer \
             --hidden-import websockets \
             --collect-all websockets \
+            --add-data "subprograms:subprograms" \
             --add-data "assets:assets" \
             --add-data "fonts:fonts" \
             main.py
