@@ -17,6 +17,18 @@ To use the built version:
 5. Download the artifact for your platform
 6. Run the downloaded Windows `.exe` or macOS `.app`
 
+#### Run from GitHub Releases
+
+If a release has been published on GitHub, you can also download the packaged files from the `Releases` page.
+
+Steps:
+
+1. Open the repository page on GitHub
+2. Open `Releases`
+3. Select the version you want
+4. Download the attached Windows `.exe` or macOS `.app`
+5. Run the downloaded file
+
 ### Run from Python source
 
 Please run `main.py` with the required files and folders prepared.
@@ -70,6 +82,24 @@ It is inspired by Square's `HIGHWAY STAR` game. To be honest, the car texture is
 - Custom course creation with the built-in course maker
 - Progression elements such as level, experience, credits, and part upgrades
 - Online room play support, which is currently still in development and unstable
+
+### Screenshots
+
+Race screen 1:
+
+![Race screen 1](screenshots/paved-race-1.png)
+
+Customize:
+
+![Customize screen](screenshots/customize.png)
+
+Race screen 2:
+
+![Race screen 2](screenshots/offroad-race.png)
+
+Race screen 3:
+
+![Race screen 3](screenshots/paved-race-2.png)
 
 ### Controls
 
@@ -211,6 +241,18 @@ To explain once again, this code was created using AI, so there may be some unre
 5. 自分の環境向けartifactをダウンロードする
 6. Windows なら`.exe`、macOS なら`.app`を実行する
 
+#### GitHub Releases から起動する方法
+
+GitHubでReleaseが公開されている場合は、`Releases` ページから配布用ファイルをダウンロードして起動することもできます。
+
+手順:
+
+1. GitHubのリポジトリページを開く
+2. `Releases` を開く
+3. 欲しいバージョンを選ぶ
+4. 添付されているWindows用`.exe` または macOS用`.app` をダウンロードする
+5. ダウンロードしたファイルを実行する
+
 #### Python から起動する方法
 
 必要なファイルやフォルダをそろえた状態で`main.py`を実行してください。
@@ -251,6 +293,24 @@ pip install pyxel pygame "websockets<14"
 - コースメーカーでオリジナルコースを追加可能
 - レベル、経験値、クレジット、パーツ強化の進行要素
 - オンラインルームでの対戦に対応（現在開発中で不安定な要素）
+
+### スクリーンショット
+
+レース画面1:
+
+![レース画面1](screenshots/paved-race-1.png)
+
+カスタマイズ:
+
+![カスタマイズ画面](screenshots/customize.png)
+
+レース画面2:
+
+![レース画面2](screenshots/offroad-race.png)
+
+レース画面3:
+
+![レース画面3](screenshots/paved-race-2.png)
 
 ### 操作方法
 
