@@ -76,6 +76,7 @@ class AppMakerMixin:
                 self._maker_msg("NEED 4+ POINTS!")
                 return False
             cd = self._maker_build_course(name)
+            self._normalize_course_definition(cd)
             # 同名コースは上書き
             for i, c in enumerate(self.COURSES):
                 if c["name"] == name:
@@ -257,7 +258,7 @@ class AppMakerMixin:
                 # コースメーカー内からは現在のカスタムコース一覧を削除できる
                 # 削除したいコースを ←→ で選んで Y/N で確認
                 # ここでは「コース選択で選ばれているコース」を削除対象とする
-                if self.selected_course >= 4:
+                if self.selected_course >= self.DEFAULT_COURSE_COUNT:
                     self.mk_del_idx   = self.selected_course
                     self.mk_del_timer = 200
                     self._maker_msg(f"DELETE '{self.COURSES[self.selected_course]['name']}'? Y/N", 200)
@@ -483,4 +484,3 @@ class AppMakerMixin:
                 mc = 10 if self.mk_msg_timer > 40 else 6
                 mw = len(self.mk_msg) * 4
                 pyxel.text(MX + (MW - mw) // 2, MY + MH - 10, self.mk_msg, mc)
-

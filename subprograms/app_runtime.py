@@ -20,6 +20,9 @@ class AppRuntimeMixin(PlayerProgressionMixin):
 
         def _asset_path(self, filename):
             candidates = [
+                self.assets_dir / filename,
+                self._project_root_dir() / "assets" / filename,
+                self._bundle_root_dir() / "assets" / filename,
                 self._bundle_root_dir() / "subprograms" / filename,
                 self._bundle_root_dir() / filename,
                 Path(__file__).resolve().parent / filename,
@@ -31,19 +34,59 @@ class AppRuntimeMixin(PlayerProgressionMixin):
                 f"Asset not found: {filename} | searched: "
                 + " / ".join(str(p) for p in candidates)
             )
+
+        def _ensure_runtime_dirs(self):
+            self.assets_dir.mkdir(parents=True, exist_ok=True)
+            self.saves_dir.mkdir(parents=True, exist_ok=True)
+
+        def _has_any_save_json(self):
+            return any(self.saves_dir.glob("*.json"))
+
+        def _is_debug_player(self):
+            return str(getattr(self, "player_name", "")).upper() == "KATORA09"
+
+        def _initial_credit_bonus(self):
+            return self.DEBUG_INITIAL_CREDITS if self._is_debug_player() else 0
+
+        def _migrate_legacy_runtime_files(self):
+            legacy_json_names = [
+                "best_times.json",
+                "custom_courses.json",
+                "credits.json",
+                "stats.json",
+                "options.json",
+                "car_data.json",
+            ]
+            for name in legacy_json_names:
+                legacy_path = self._project_root_dir() / name
+                target_path = self.saves_dir / name
+                if legacy_path.exists() and not target_path.exists():
+                    legacy_path.replace(target_path)
+
+            legacy_png_dir = Path(__file__).resolve().parent
+            for legacy_path in legacy_png_dir.glob("*.png"):
+                target_path = self.assets_dir / legacy_path.name
+                if not target_path.exists():
+                    legacy_path.replace(target_path)
+
         def __init__(self):
             # 実行ファイルの場所（ベースディレクトリ）を取得
             # Pyxelのapp2exeを使用した場合、sys.executable に exeのパス が入る
             exe_name = os.path.basename(sys.executable).lower()
             base_dir = self._project_root_dir()
+            self.assets_dir = base_dir / "assets"
+            self.saves_dir = base_dir / "saves"
+            self._ensure_runtime_dirs()
+            first_launch = not self._has_any_save_json()
+            self._migrate_legacy_runtime_files()
 
             # ベースディレクトリを元にファイルの絶対パスを作成
-            self.save_file = os.path.join(base_dir, "best_times.json")
-            self.custom_courses_file = os.path.join(base_dir, "custom_courses.json")
-            self.credits_file  = os.path.join(base_dir, "credits.json")
-            self.stats_file    = os.path.join(base_dir, "stats.json")
-            self.options_file  = os.path.join(base_dir, "options.json")
-            self.car_data_file = os.path.join(base_dir, "car_data.json")
+            self.save_file = os.path.join(self.saves_dir, "best_times.json")
+            self.custom_courses_file = os.path.join(self.saves_dir, "custom_courses.json")
+            self.credits_file  = os.path.join(self.saves_dir, "credits.json")
+            self.stats_file    = os.path.join(self.saves_dir, "stats.json")
+            self.options_file  = os.path.join(self.saves_dir, "options.json")
+            self.car_data_file = os.path.join(self.saves_dir, "car_data.json")
             self.online_client  = None
             self.online_peers   = {}             # pid -> 補間済み描画用状態(dict)
             self._peer_interp   = {}             # pid -> PeerInterpolator インスタンス
@@ -90,8 +133,11 @@ class AppRuntimeMixin(PlayerProgressionMixin):
             self.goal_laps       = 3
             self.num_rivals      = 3   # ライバル台数 (1〜11)
             self.is_time_attack  = False
+            self.is_grand_prix   = False
             self.selected_course = 0
-            self.difficulty      = 2   # 0=初級(EASY), 1=中級(NORMAL), 2=上級(HARD)
+            self.selected_cup    = 0
+            self.difficulty      = 1   # 0=初級(EASY), 1=中級(NORMAL), 2=上級(HARD)
+            self.mode_select_focus = 0
             self.time_sel_focus  = 0   # 0=DAY, 1=NIGHT, 2=EASY, 3=NORMAL, 4=HARD, 5=START
             self.ghost_enabled   = True   # ゴースト表示ON/OFF
             self.ghost_data      = []     # 保存済みゴーストフレーム（再生用）
@@ -102,17 +148,28 @@ class AppRuntimeMixin(PlayerProgressionMixin):
             self._share_msg_timer = 0
             self.player_name      = ""
             self.player_name_input = ""
+            self.cloud_img_bank   = 2
+            self.cloud_img_u      = 0
+            self.cloud_img_v      = 128
+            self.cloud_img_w      = 50
+            self.cloud_img_h      = 50
 
             pyxel.init(256, 192, title="Highway Racer", quit_key=pyxel.KEY_NONE)
 
             self.setup_sounds()
             self.setup_custom_palette()
             pyxel.images[0].load(0, 0, self._asset_path("car.png"))
-            pyxel.images[1].load(0, 0, self._asset_path("cloud.png"))
             pyxel.images[2].load(0, 0, self._asset_path("title.png"))
+            pyxel.images[2].load(0, 32, self._asset_path("rock.png"))
+            pyxel.images[self.cloud_img_bank].load(
+                self.cloud_img_u, self.cloud_img_v, self._asset_path("cloud.png")
+            )
 
             # カスタムコースをファイルから読み込み COURSES に追加
             self._load_custom_courses()
+
+            for course_def in self.COURSES:
+                self._normalize_course_definition(course_def)
 
             # 全コースのスムーズポイントを事前計算しておく
             self.course_data = []
@@ -129,13 +186,20 @@ class AppRuntimeMixin(PlayerProgressionMixin):
             # ランキングデータから best_lap_time を取得（後方互換）
             _init_ranking = self.best_times.get(f"ta_ranking_{self.COURSES[self.selected_course]['name']}", [])
             self.best_lap_time = _init_ranking[0] if _init_ranking else self.best_times.get(self._course_key(), None)
+            self.load_options()   # map_pixel_size, player_name などを復元
             self.credits  = self.load_credits()
             self.stats    = self.load_stats()
+            self._ensure_grand_prix_results()
+            self._reset_grand_prix_state()
             self._ensure_player_progression()
             self.car_data = self.load_car_data()
-            self.load_options()   # map_pixel_size などを復元
             self.player_name_input = self.player_name
-            if not self.player_name:
+            if first_launch:
+                self.player_name = ""
+                self.player_name_input = ""
+                self.player_name_editing = True
+                self.state = self.STATE_NAME_ENTRY
+            elif not self.player_name:
                 self.state = self.STATE_NAME_ENTRY
             self.online_my_name = self.player_name
             # カスタマイズ画面の選択状態
@@ -222,14 +286,15 @@ class AppRuntimeMixin(PlayerProgressionMixin):
             self.goal_auto_idx = 0
             self.clouds = []
             while len(self.clouds) < 5:
-                c_type = random.choice([0, 1])
-                cw, ch, u, v = (45, 15, 0, 0) if c_type == 0 else (30, 20, 0, 15)
                 self.clouds.append({
                     "x": random.uniform(0, pyxel.width),
                     "y": random.uniform(5, 40),
                     "depth": random.uniform(0.1, 0.8),
-                    "u": u, "v": v,
-                    "orig_w": cw, "orig_h": ch,
+                    "img": self.cloud_img_bank,
+                    "u": self.cloud_img_u,
+                    "v": self.cloud_img_v,
+                    "orig_w": self.cloud_img_w,
+                    "orig_h": self.cloud_img_h,
                     "speed_factor": random.uniform(0.05, 0.1)
                 })
             # smooth_pointsからスタート地点に最も近いインデックスを求める
@@ -328,6 +393,7 @@ class AppRuntimeMixin(PlayerProgressionMixin):
             self.session_distance = 0.0   # 今レースの走行距離
             self.session_frames   = 0     # 今レースの走行フレーム数
             self._reset_goal_xp_animation_state()
+            self._reset_grand_prix_result_animation()
 
             # スリップストリーム
             self.slipstream_timer  = 0     # 他車の後ろにいる継続フレーム数
@@ -361,3 +427,249 @@ class AppRuntimeMixin(PlayerProgressionMixin):
             self.fade_dir    = 1
             self.fade_alpha  = 0
 
+        def _ensure_grand_prix_results(self):
+            results = self.stats.setdefault("grand_prix_results", {})
+            for cup in self.GRAND_PRIX_CUPS:
+                results.setdefault(cup["name"], {})
+            return results
+
+        def _grand_prix_points_for_rank(self, rank):
+            table = [5, 3, 2, 1]
+            idx = rank - 1
+            if 0 <= idx < len(table):
+                return table[idx]
+            return 0
+
+        def _grand_prix_forced_night_mode(self, cup_idx=None):
+            idx = self.selected_cup if cup_idx is None else int(cup_idx)
+            cup = self.GRAND_PRIX_CUPS[idx % len(self.GRAND_PRIX_CUPS)]
+            return cup["name"] == "TOURING CUP"
+
+        def _apply_grand_prix_fixed_settings(self, cup_idx=None):
+            self.difficulty = 1
+            self.num_rivals = 3
+            self.is_night_mode = self._grand_prix_forced_night_mode(cup_idx)
+
+        def _reset_grand_prix_state(self):
+            self.grand_prix_active = False
+            self.grand_prix_cup_index = 0
+            self.grand_prix_race_index = 0
+            self.grand_prix_total_points = []
+            self.grand_prix_previous_points = []
+            self.grand_prix_race_points = []
+            self.grand_prix_result_order = []
+            self.grand_prix_final_order = []
+            self.grand_prix_final_rank = 0
+            self.grand_prix_final_prize = 0
+            self.grand_prix_pending_course = None
+            self.grand_prix_last_points_awarded = False
+            self.grand_prix_result_complete = False
+            self.grand_prix_last_finish_positions = []
+
+        def _reset_grand_prix_result_animation(self):
+            count = self.num_rivals + 1
+            self.grand_prix_anim_phase = 0
+            self.grand_prix_anim_timer = 0
+            self.grand_prix_display_race_points = [0.0] * count
+            self.grand_prix_display_total_points = [0.0] * count
+            self.grand_prix_result_complete = False
+
+        def _grand_prix_driver_labels(self):
+            total = self.num_rivals + 1
+            player_label = (getattr(self, "player_name", "") or "PLAYER")[:12]
+            return [player_label] + [f"RIVAL {i}" for i in range(1, total)]
+
+        def _grand_prix_current_cup(self):
+            cup_idx = getattr(self, "grand_prix_cup_index", self.selected_cup)
+            return self.GRAND_PRIX_CUPS[cup_idx % len(self.GRAND_PRIX_CUPS)]
+
+        def _prepare_grand_prix_for_start(self):
+            cup_idx = self.selected_cup % len(self.GRAND_PRIX_CUPS)
+            cup = self.GRAND_PRIX_CUPS[cup_idx]
+            self._apply_grand_prix_fixed_settings(cup_idx)
+            total = self.num_rivals + 1
+            self.grand_prix_active = True
+            self.grand_prix_cup_index = cup_idx
+            self.grand_prix_race_index = 0
+            self.grand_prix_total_points = [0] * total
+            self.grand_prix_previous_points = [0] * total
+            self.grand_prix_race_points = [0] * total
+            self.grand_prix_result_order = list(range(total))
+            self.grand_prix_final_order = []
+            self.grand_prix_final_rank = 0
+            self.grand_prix_final_prize = 0
+            self.grand_prix_pending_course = cup["courses"][0]
+            self.grand_prix_last_points_awarded = False
+            self.grand_prix_last_finish_positions = [999] * total
+            self._reset_grand_prix_result_animation()
+
+        def _prime_grand_prix_race(self):
+            if not (self.is_grand_prix and getattr(self, "grand_prix_active", False)):
+                return
+            cup = self._grand_prix_current_cup()
+            self._apply_grand_prix_fixed_settings(self.grand_prix_cup_index)
+            race_idx = max(0, min(self.grand_prix_race_index, len(cup["courses"]) - 1))
+            self.selected_course = cup["courses"][race_idx]
+            self.grand_prix_pending_course = self.selected_course
+            self._build_map(self.selected_course)
+            self.best_lap_time = self.best_times.get(self._course_key(), None)
+
+        def _grand_prix_is_final_race(self):
+            cup = self._grand_prix_current_cup()
+            return self.grand_prix_race_index >= len(cup["courses"]) - 1
+
+        def _grand_prix_overall_order(self):
+            totals = list(getattr(self, "grand_prix_total_points", []))
+            final_ranks = list(getattr(self, "grand_prix_last_finish_positions", []))
+            order = list(range(len(totals)))
+            order.sort(key=lambda idx: (-totals[idx], final_ranks[idx] if idx < len(final_ranks) else 999, idx))
+            return order
+
+        def _grand_prix_base_prize_for_rank(self, rank):
+            total_cars = self.num_rivals + 1
+            if total_cars <= 1:
+                rank_prize = 1000
+            else:
+                t = (rank - 1) / max(total_cars - 1, 1)
+                rank_prize = int(1000 * (1 - t) + 50 * t)
+            prize_diff_mult = [0.7, 1.0, 1.5][self.difficulty]
+            return int(rank_prize * self.goal_laps * prize_diff_mult)
+
+        def _save_grand_prix_cup_result(self):
+            cup = self._grand_prix_current_cup()
+            results = self._ensure_grand_prix_results()
+            entry = results.setdefault(cup["name"], {})
+            last_rank = int(self.grand_prix_final_rank)
+            last_points = int(self.grand_prix_total_points[0]) if self.grand_prix_total_points else 0
+            entry.update(
+                {
+                    "last_rank": last_rank,
+                    "last_points": last_points,
+                    "best_rank": min(int(entry.get("best_rank", last_rank or 99)), last_rank or 99),
+                    "best_points": max(int(entry.get("best_points", 0)), last_points),
+                    "play_count": int(entry.get("play_count", 0)) + 1,
+                    "prize": int(self.grand_prix_final_prize),
+                }
+            )
+            self.save_stats()
+
+        def _grand_prix_finish_race(self):
+            total = self.num_rivals + 1
+            self.grand_prix_previous_points = list(self.grand_prix_total_points)
+            finish_order = [(0, self.car_progress)]
+            for idx, rival in enumerate(self.rivals, start=1):
+                finish_order.append((idx, rival.progress))
+            finish_order.sort(key=lambda entry: entry[1], reverse=True)
+            race_points = [0] * total
+            finish_positions = [999] * total
+            for rank, (driver_idx, _) in enumerate(finish_order, start=1):
+                finish_positions[driver_idx] = rank
+                race_points[driver_idx] = self._grand_prix_points_for_rank(rank)
+                if driver_idx == 0:
+                    self.goal_rank = rank
+            self.grand_prix_race_points = race_points
+            self.grand_prix_last_finish_positions = finish_positions
+            self.grand_prix_total_points = [
+                prev + gain for prev, gain in zip(self.grand_prix_previous_points, race_points)
+            ]
+            self.grand_prix_result_order = list(range(total))
+            self.grand_prix_result_order.sort(
+                key=lambda idx: (-race_points[idx], -self.grand_prix_total_points[idx], idx)
+            )
+            self._reset_grand_prix_result_animation()
+            self.grand_prix_anim_phase = 1
+            self.grand_prix_last_points_awarded = True
+
+            if self._grand_prix_is_final_race():
+                self.grand_prix_final_order = self._grand_prix_overall_order()
+                self.grand_prix_final_rank = self.grand_prix_final_order.index(0) + 1
+                self.goal_rank = self.grand_prix_final_rank
+                self.grand_prix_final_prize = int(self._grand_prix_base_prize_for_rank(self.grand_prix_final_rank) * 10 / 3)
+                self.prize_amount = self.grand_prix_final_prize
+                self.prize_bonus = 0
+                self.prize_display = 0
+                self.prize_anim_timer = 0
+                self.prize_anim_phase = 0
+                self._save_grand_prix_cup_result()
+            else:
+                self.grand_prix_final_order = []
+                self.grand_prix_final_rank = 0
+                self.grand_prix_final_prize = 0
+                self.prize_amount = 0
+                self.prize_bonus = 0
+                self.prize_display = 0
+                self.prize_anim_timer = 0
+                self.prize_anim_phase = 0
+
+        def _update_grand_prix_result_animation(self):
+            if not getattr(self, "grand_prix_last_points_awarded", False):
+                return
+            if self.grand_prix_anim_phase == 0:
+                return
+
+            self.grand_prix_anim_timer += 1
+            if self.grand_prix_anim_phase == 1:
+                progress = min(self.grand_prix_anim_timer / 24.0, 1.0)
+                eased = 1.0 - (1.0 - progress) * (1.0 - progress)
+                self.grand_prix_display_race_points = [
+                    gain * eased for gain in self.grand_prix_race_points
+                ]
+                self.grand_prix_display_total_points = list(self.grand_prix_previous_points)
+                if progress >= 1.0:
+                    self.grand_prix_anim_phase = 2
+                    self.grand_prix_anim_timer = 0
+            elif self.grand_prix_anim_phase == 2:
+                progress = min(self.grand_prix_anim_timer / 36.0, 1.0)
+                eased = 1.0 - (1.0 - progress) * (1.0 - progress)
+                self.grand_prix_display_race_points = list(self.grand_prix_race_points)
+                self.grand_prix_display_total_points = [
+                    prev + (total - prev) * eased
+                    for prev, total in zip(self.grand_prix_previous_points, self.grand_prix_total_points)
+                ]
+                if progress >= 1.0:
+                    self.grand_prix_display_total_points = list(self.grand_prix_total_points)
+                    self.grand_prix_anim_phase = 3
+                    self.grand_prix_anim_timer = 0
+            elif self.grand_prix_anim_phase == 3:
+                if self._grand_prix_is_final_race():
+                    self.prize_anim_phase = 1
+                    self.grand_prix_anim_phase = 4
+                    self.grand_prix_anim_timer = 0
+                else:
+                    self.grand_prix_result_complete = True
+                    self.grand_prix_anim_phase = 4
+            elif self.grand_prix_anim_phase == 4:
+                if self._grand_prix_is_final_race():
+                    if self.prize_anim_phase == 1:
+                        self.prize_anim_timer += 1
+                        progress = min(self.prize_anim_timer / 60.0, 1.0)
+                        self.prize_display = int(self.prize_amount * progress)
+                        if self.prize_anim_timer >= 65:
+                            self.prize_display = self.prize_amount
+                            self.prize_anim_phase = 3
+                            self.credits += self.prize_amount
+                            self.stats["total_credits"] += self.prize_amount
+                            self.save_credits()
+                            self.save_stats()
+                    if self.prize_anim_phase >= 3:
+                        self._start_goal_xp_animation_if_needed()
+                        self._update_goal_xp_animation()
+                        if not getattr(self, 'xp_anim_active', False) and getattr(self, 'pending_goal_xp', 0) <= 0:
+                            self.grand_prix_result_complete = True
+                else:
+                    self.grand_prix_result_complete = True
+
+        def _continue_grand_prix_from_results(self):
+            if self._grand_prix_is_final_race():
+                cup = self._grand_prix_current_cup()
+                self._reset_grand_prix_state()
+                self.selected_course = cup["courses"][0]
+                self._build_map(self.selected_course)
+                self.best_lap_time = self.best_times.get(self._course_key(), None)
+                self._start_fade(self.STATE_MENU)
+                return
+
+            self.grand_prix_race_index += 1
+            self._prime_grand_prix_race()
+            self.reset()
+            self._start_fade(self.STATE_PLAY)

@@ -166,11 +166,11 @@ class AppUpdateOnlineMixin:
         if self.online_is_host and self.online_client and self.online_client.connected:
             # A/D でコース変更
             if pyxel.btnp(pyxel.KEY_LEFT) or pyxel.btnp(pyxel.KEY_A) or self._vjoy_left:
-                self.selected_course = (self.selected_course - 1) % 4
+                self.selected_course = (self.selected_course - 1) % self.DEFAULT_COURSE_COUNT
                 self._build_map(self.selected_course); pyxel.play(1, 1)
                 self._online_broadcast_settings()
             if pyxel.btnp(pyxel.KEY_RIGHT) or pyxel.btnp(pyxel.KEY_D) or self._vjoy_right:
-                self.selected_course = (self.selected_course + 1) % 4
+                self.selected_course = (self.selected_course + 1) % self.DEFAULT_COURSE_COUNT
                 self._build_map(self.selected_course); pyxel.play(1, 1)
                 self._online_broadcast_settings()
             # W/S でラップ数変更
@@ -212,4 +212,3 @@ class AppUpdateOnlineMixin:
             self._sent_join        = False
             self.online_lobby_ready = False
             self._start_fade(self.STATE_ONLINE_ENTRY); pyxel.play(1, 1)
-

@@ -279,18 +279,24 @@ class RivalCar:
 
         corner_severity = min(max_corner / 0.8, 1.0)
         straight_bonus = 1.0 + (1.0 - corner_severity) * 0.20
+        severe_corner = max(0.0, (corner_severity - 0.55) / 0.45)
         if is_offroad:
             target_spd = 0.55 - corner_severity * 0.18
+            target_spd -= severe_corner * severe_corner * 0.10
         else:
             target_spd = 0.70 - corner_severity * 0.20
+            target_spd -= severe_corner * severe_corner * 0.14
         target_spd *= self.rubber_speed * boost_mult * player_speed_scale * straight_bonus
         # ダート走行ペナルティを速度目標に適用
         target_spd *= dirt_speed_mult
+        target_spd = max(0.24 if not is_offroad else 0.18, target_spd)
 
         need_brake = spd > target_spd + 0.02
 
         if need_brake:
-            brake_force = min((spd - target_spd) * 0.15, 0.012)
+            brake_gain = 0.15 + severe_corner * 0.20
+            brake_cap = 0.012 + severe_corner * 0.014
+            brake_force = min((spd - target_spd) * brake_gain, brake_cap)
             if spd > 0.001:
                 self.vx -= (self.vx / spd) * brake_force
                 self.vy -= (self.vy / spd) * brake_force

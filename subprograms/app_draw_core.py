@@ -23,6 +23,7 @@ class AppDrawCoreMixin:
             elif self.state == self.STATE_TIME_SELECT: self.draw_time_select_screen()
             elif self.state == self.STATE_RANKING: self.draw_ranking_screen()
             elif self.state == self.STATE_CUSTOMIZE: self.draw_customize_screen()
+            elif self.state == self.STATE_NAME_ENTRY: self.draw_name_entry_screen()
             elif self.state == self.STATE_COURSE_MAKER: self._maker_draw()
             elif self.state == self.STATE_ONLINE_LOBBY:
                 self.draw_online_lobby()
@@ -360,12 +361,45 @@ class AppDrawCoreMixin:
             cy = map_y + self.car_world_y * scale
             pyxel.rect(cx - 1, cy - 1, 3, 3, 8)
 
-        def draw_game_scene(self):
-            sky_color = 16 if self.is_night_mode else 6
-            pyxel.rect(0, 0, pyxel.width, 80, sky_color)
+        def _draw_course_backdrop(self):
+            horizon = 80
+            cd = self.COURSES[self.selected_course]
+            theme = cd.get("scenery", {}).get("theme", "default")
+            night = self.is_night_mode
+
+            sky_color = 16 if night else 6
+            if theme == "sunset" and not night:
+                sky_color = 9
+            elif theme == "coast" and not night:
+                sky_color = 12
+            pyxel.rect(0, 0, pyxel.width, horizon, sky_color)
+
+            if night:
+                moon_x = 196 if theme in ("city", "sunset") else 208
+                moon_y = 18 if theme != "forest" else 14
+                pyxel.circ(moon_x, moon_y, 8, 10)
+                pyxel.circ(moon_x - 3, moon_y - 1, 8, sky_color)
+                for i in range(18):
+                    sx = (17 * i + self.selected_course * 23) % pyxel.width
+                    sy = 8 + (11 * i + self.selected_course * 7) % 34
+                    pyxel.pset(sx, sy, 7 if i % 3 else 10)
+
+            if theme == "sunset":
+                for i, col in enumerate((8, 9, 14, 15)):
+                    pyxel.rect(0, i * 14, pyxel.width, 14, col if not night else sky_color)
 
             for c in sorted(self.clouds, key=lambda x: x["depth"]):
-                scale = 0.5 + (c["depth"] * 0.5)
+                scale = 0.45 + (c["depth"] * 0.55)
+                span = pyxel.width + c["orig_w"] + 64
+                turn_shift = -self.car_angle * (18.0 + 42.0 * c["depth"])
+                draw_x = ((c["x"] + turn_shift + span) % span) - (c["orig_w"] + 32)
+                pyxel.blt(
+                    draw_x, c["y"], c.get("img", 2),
+                    c["u"], c["v"], c["orig_w"], c["orig_h"], 0, scale=scale
+                )
+
+        def draw_game_scene(self):
+            self._draw_course_backdrop()
 
             self.draw_mode7_road()
             self.draw_walls_3d()   # 壁の立体描画
@@ -626,22 +660,27 @@ class AppDrawCoreMixin:
                 total_cars = len(self.rivals) + 1
                 s = "CONGRATULATIONS! GOAL!!"
                 x_txt = pyxel.width / 2 - len(s) * 2
-                box_h = 90 if not self.is_time_attack else 65
-                pyxel.rect(x_txt - 10, pyxel.height / 2 - 40, len(s) * 4 + 20, box_h, 0)
-                pyxel.text(x_txt, pyxel.height / 2 - 35, s, 10)
-
-                if not self.is_time_attack:
+                if self.is_grand_prix:
+                    self._draw_grand_prix_goal_box(s, total_cars)
+                elif not self.is_time_attack:
+                    box_x = x_txt - 10
+                    box_y = pyxel.height / 2 - 40
+                    box_w = len(s) * 4 + 20
+                    box_h = 122
+                    pyxel.rect(box_x, box_y, box_w, box_h, 0)
+                    pyxel.rectb(box_x, box_y, box_w, box_h, 7)
+                    pyxel.text(x_txt, box_y + 5, s, 10)
                     # レースモード：順位を大きく表示
                     rank_col = 10 if self.goal_rank == 1 else (9 if self.goal_rank == 2 else 7)
                     rank_s = f"FINISH: {self.goal_rank} / {total_cars}"
                     if self.goal_rank == 1:
                         rank_col = 10 if (pyxel.frame_count % 20) < 10 else 9
-                    pyxel.text(x_txt + 15, pyxel.height / 2 - 18, rank_s, rank_col)
+                    pyxel.text(x_txt + 15, box_y + 22, rank_s, rank_col)
                     best_txt = f"{self.best_lap_time:.2f}s" if self.best_lap_time else "---"
-                    pyxel.text(x_txt + 10, pyxel.height / 2 - 6, f"BEST LAP: {best_txt}", 6)
+                    pyxel.text(x_txt + 10, box_y + 34, f"BEST LAP: {best_txt}", 6)
 
                     # 賞金表示
-                    prize_y = pyxel.height // 2 + 6
+                    prize_y = box_y + 48
                     # 基本賞金
                     base_col = 10 if self.prize_anim_phase >= 1 else 5
                     pyxel.text(x_txt + 10, prize_y, f"PRIZE: {self.prize_amount} CR", base_col)
@@ -661,11 +700,17 @@ class AppDrawCoreMixin:
                     if self.prize_anim_phase == 3:
                         pyxel.text(x_txt + 10, total_y + 9, f"TOTAL : {self.credits} CR", 7)
 
-                    pyxel.text(x_txt + 7, pyxel.height / 2 + 8 + 35, "PUSH 'R' TO RESTART", 6)
+                    if self.prize_anim_phase >= 3:
+                        self._draw_goal_xp_panel(x_txt + 10, total_y + 21, box_w - 30)
+
+                    restart_hint = "PUSH SPACE TO MENU"
+                    pyxel.text(box_x + (box_w - len(restart_hint) * 4) // 2, box_y + box_h - 11, restart_hint, 6)
 
                 # ── オンライン対戦ゴール順位パネル ──
                 is_online_race = (self.online_client and self.online_client.connected)
-                if is_online_race and not self.is_time_attack:
+                if self.is_grand_prix:
+                    pass
+                elif is_online_race and not self.is_time_attack:
                     finish_order = getattr(self, 'online_finish_order', [])
                     W, H = pyxel.width, pyxel.height
                     px_r = W - 72; py_r = 10
@@ -698,7 +743,10 @@ class AppDrawCoreMixin:
                     pyxel.text(px_r + (panel_w - len(hint)*4)//2,
                                py_r + panel_h - 4, hint,
                                10 if (pyxel.frame_count // 15) % 2 == 0 else 7)
-                else:
+                elif self.is_time_attack:
+                    box_h = 65
+                    pyxel.rect(x_txt - 10, pyxel.height / 2 - 40, len(s) * 4 + 20, box_h, 0)
+                    pyxel.text(x_txt, pyxel.height / 2 - 35, s, 10)
                     # タイムアタックモード：ベストラップを表示
                     if self.is_new_record:
                         col = 7 if (pyxel.frame_count % 20) < 10 else 10
@@ -707,7 +755,82 @@ class AppDrawCoreMixin:
                         best_txt = f"{self.best_lap_time:.2f}s" if self.best_lap_time else "---"
                         pyxel.text(x_txt + 7, pyxel.height / 2 - 18, f"BEST LAP: {best_txt}", 10)
 
-                    pyxel.text(x_txt + 7, pyxel.height / 2 + 8, "PUSH 'R' TO RESTART", 6)
+                    restart_hint = "PUSH 'R' TO RESTART" if self.is_time_attack else "PUSH SPACE TO RESTART"
+                    pyxel.text(x_txt + 7, pyxel.height / 2 + 8, restart_hint, 6)
+
+        def _draw_grand_prix_goal_box(self, title_text, total_cars):
+            cup = self._grand_prix_current_cup()
+            race_no = self.grand_prix_race_index + 1
+            race_count = len(cup["courses"])
+            course_name = self.COURSES[self.selected_course]["name"]
+            order = self._grand_prix_overall_order()
+            if self._grand_prix_is_final_race() and self.grand_prix_final_order:
+                order = self.grand_prix_final_order
+
+            row_h = 7 if total_cars > 8 else 8 if total_cars > 6 else 10
+            footer_lines = 8 if self._grand_prix_is_final_race() else 3
+
+            box_w = 180
+            table_w = 136
+            box_h = 54 + len(order) * row_h + footer_lines * 9
+            box_x = max(8, (pyxel.width - box_w) // 2)
+            box_y = max(8, (pyxel.height - box_h) // 2)
+
+            header_y = box_y + 8
+            cup_y = header_y + 12
+            course_y = cup_y + 10
+            table_y = course_y + 16
+            table_x = box_x + 18
+            driver_x = table_x
+            race_x = table_x + 92
+            total_x = table_x + 120
+
+            pyxel.rect(box_x, box_y, box_w, box_h, 0)
+            pyxel.rectb(box_x, box_y, box_w, box_h, 7)
+
+            title_x = box_x + (box_w - len(title_text) * 4) // 2
+            pyxel.text(title_x, header_y, title_text, 10)
+            pyxel.text(box_x + 10, cup_y, f"{cup['name']}  RACE {race_no}/{race_count}", 10)
+            pyxel.text(box_x + 10, course_y, course_name, 7)
+
+            pyxel.text(driver_x, table_y - 10, "DRIVER", 6)
+            pyxel.text(race_x, table_y - 10, "RACE", 6)
+            pyxel.text(total_x, table_y - 10, "TOTAL", 6)
+
+            labels = self._grand_prix_driver_labels()
+            race_pts = getattr(self, "grand_prix_display_race_points", self.grand_prix_race_points)
+            total_pts = getattr(self, "grand_prix_display_total_points", self.grand_prix_total_points)
+            for row, driver_idx in enumerate(order):
+                ry = table_y + row * row_h
+                is_player = driver_idx == 0
+                if is_player:
+                    pyxel.rect(table_x - 4, ry - 1, table_w, row_h - 1, 1)
+                col = 10 if row == 0 else (7 if is_player else 6)
+                pyxel.text(driver_x, ry, f"{row + 1}. {labels[driver_idx]}", col)
+                pyxel.text(race_x, ry, f"{int(round(race_pts[driver_idx])):>2}", 9)
+                pyxel.text(total_x, ry, f"{int(round(total_pts[driver_idx])):>2}", 10 if is_player else 7)
+
+            hint_y = table_y + len(order) * row_h + 6
+            if self._grand_prix_is_final_race():
+                rank_col = 10 if self.grand_prix_final_rank == 1 else 7
+                pyxel.text(box_x + 10, hint_y + 9, f"FINAL RANK: {self.grand_prix_final_rank} / {total_cars}", rank_col)
+                if self.prize_anim_phase >= 1:
+                    pyxel.text(box_x + 10, hint_y + 18, f"PRIZE: {self.prize_display} CR", 10)
+                if self.prize_anim_phase == 3:
+                    pyxel.text(box_x + 10, hint_y + 27, f"TOTAL : {self.credits} CR", 7)
+                    self._draw_goal_xp_panel(box_x + 10, hint_y + 38, box_w - 20)
+            else:
+                next_course = cup["courses"][min(self.grand_prix_race_index + 1, race_count - 1)]
+                pyxel.text(box_x + 10, hint_y, f"NEXT: {self.COURSES[next_course]['name']}", 6)
+
+            if self.grand_prix_result_complete:
+                hint = "PUSH SPACE FOR MENU" if self._grand_prix_is_final_race() else "PUSH SPACE FOR NEXT RACE"
+                hint_x = box_x + (box_w - len(hint) * 4) // 2
+                hint_line_y = hint_y + 58 if self._grand_prix_is_final_race() else hint_y + 8
+                pyxel.text(hint_x, hint_line_y, hint, 6)
+            else:
+                counting_y = hint_y + 58 if self._grand_prix_is_final_race() else hint_y + 8
+                pyxel.text(box_x + 10, counting_y, "COUNTING POINTS...", 5)
 
         def draw_pause_overlay(self):
             W, H = pyxel.width, pyxel.height
@@ -762,6 +885,39 @@ class AppDrawCoreMixin:
                 x2, y2 = x + pts[(i + 1) % 4][0], y + pts[(i + 1) % 4][1]
                 pyxel.line(x1, y1, x2, y2, col)
             pyxel.pset(x, y, col)
+
+        def draw_name_entry_screen(self):
+            W, H = pyxel.width, pyxel.height
+            box_w, box_h = 168, 62
+            box_x = (W - box_w) // 2
+            box_y = (H - box_h) // 2
+            name = getattr(self, "player_name_input", "")
+            blink = (pyxel.frame_count // 15) % 2 == 0
+            display_name = name + ("_" if blink and len(name) < 12 else "")
+
+            pyxel.rect(box_x, box_y, box_w, box_h, 0)
+            pyxel.rectb(box_x, box_y, box_w, box_h, 7)
+            pyxel.text(box_x + 48, box_y + 10, "ENTER YOUR NAME", 10)
+            pyxel.rect(box_x + 16, box_y + 24, box_w - 32, 14, 1)
+            pyxel.rectb(box_x + 16, box_y + 24, box_w - 32, 14, 6)
+            pyxel.text(box_x + 22, box_y + 29, display_name or "_", 7)
+            pyxel.text(box_x + 24, box_y + 46, "A-Z 0-9 - _   ENTER: OK", 5)
+
+        def _draw_goal_xp_panel(self, x, y, width):
+            level = int(getattr(self, 'xp_anim_current_level', getattr(self, 'player_level', 0)))
+            xp = int(getattr(self, 'xp_anim_current_xp', getattr(self, 'player_xp', 0)))
+            req_xp = max(1, self.get_required_xp_for_level(level))
+            if level >= getattr(self, 'MAX_PLAYER_LEVEL', 50):
+                ratio = 1.0
+            else:
+                ratio = max(0.0, min(xp / req_xp, 1.0))
+
+            pyxel.text(x, y, f"PLAYER LV {level}", 10)
+
+            bar_y = y + 10
+            pyxel.rect(x, bar_y, width, 6, 1)
+            pyxel.rectb(x, bar_y, width, 6, 5)
+            pyxel.rect(x + 1, bar_y + 1, max(0, int((width - 2) * ratio)), 4, 11 if level < self.MAX_PLAYER_LEVEL else 10)
 
         def draw_speedometer(self):
             mx, my = pyxel.width - 30, pyxel.height - 25
@@ -841,21 +997,17 @@ class AppDrawCoreMixin:
             # 背景バー
             pyxel.rect(cx_bar - bar_half - 1, bar_y - 1, bar_half * 2 + 2, 5, 0)
             # 左右の目盛り線
-            pyxel.line(cx_bar - bar_half, bar_y - 1, cx_bar - bar_half, bar_y + 3, 5)
-            pyxel.line(cx_bar,            bar_y - 1, cx_bar,            bar_y + 3, 5)
-            pyxel.line(cx_bar + bar_half, bar_y - 1, cx_bar + bar_half, bar_y + 3, 5)
+            pyxel.line(cx_bar,            bar_y - 1, cx_bar,            bar_y + 3, 0)
             # 入力量バー（中央から伸びる）
             fill_len = int(abs(si) * bar_half)
             if fill_len > 0:
-                bar_col = 10 if abs(si) < 0.6 else 8   # 普通は緑、強ハンドルは赤
                 if si < 0:
-                    pyxel.rect(cx_bar - fill_len, bar_y, fill_len, 3, bar_col)
+                    pyxel.rect(cx_bar - fill_len, bar_y, fill_len, 3, 0)
                 else:
-                    pyxel.rect(cx_bar, bar_y, fill_len, 3, bar_col)
+                    pyxel.rect(cx_bar, bar_y, fill_len, 3, 0)
             # センターマーカー（常時表示）
             pyxel.rect(cx_bar - 1, bar_y - 1, 3, 5, 7)
             # インジケーター（現在位置のノブ）
             knob_x = int(cx_bar + si * bar_half)
             pyxel.rect(knob_x - 2, bar_y - 2, 5, 7, 7)
             pyxel.rect(knob_x - 1, bar_y - 1, 3, 5, 10 if abs(si) > 0.25 else 11)
-

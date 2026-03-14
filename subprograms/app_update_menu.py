@@ -1,7 +1,14 @@
-from .common import pyxel
+from .common import pyxel, os
 
 
 class AppUpdateMenuMixin:
+    def _debug_set_player_level_50(self):
+        if not self._is_debug_player():
+            return
+        self.stats["player_level"] = 50
+        self.save_stats()
+        pyxel.play(1, 2)
+
     def _update_state_name_entry(self):
         allowed_keys = [
             (pyxel.KEY_A,'A'),(pyxel.KEY_B,'B'),(pyxel.KEY_C,'C'),(pyxel.KEY_D,'D'),
@@ -21,8 +28,13 @@ class AppUpdateMenuMixin:
             name = self.player_name_input.strip()[:12]
             if name:
                 self.player_name = name
+                self.player_name_input = name
+                self.player_name_editing = False
                 self.online_my_name = name
                 self.save_options()
+                if not getattr(self, "credits_file", "") or not os.path.exists(self.credits_file):
+                    self.credits = self._initial_credit_bonus()
+                    self.save_credits()
                 self.state = self.STATE_TITLE
                 pyxel.play(1, 2)
             else:
@@ -45,6 +57,8 @@ class AppUpdateMenuMixin:
         down = pyxel.btnp(pyxel.KEY_DOWN) or pyxel.btnp(pyxel.KEY_S) or self._vjoy_dn
         if up:   self.menu_focus = (self.menu_focus - 1) % MENU_ITEMS; pyxel.play(1, 1)
         if down: self.menu_focus = (self.menu_focus + 1) % MENU_ITEMS; pyxel.play(1, 1)
+        if pyxel.btnp(pyxel.KEY_X) and self._is_debug_player():
+            self._debug_set_player_level_50()
         if pyxel.btnp(pyxel.KEY_SPACE) or pyxel.btnp(pyxel.KEY_RETURN) or self._vjoy_space:
             pyxel.play(1, 2)
             if   self.menu_focus == 0: self._start_fade(self.STATE_MODE_SELECT)
@@ -157,10 +171,20 @@ class AppUpdateMenuMixin:
                 pyxel.play(1, 1)
 
     def _update_state_mode_select(self):
-        if pyxel.btnp(pyxel.KEY_LEFT) or pyxel.btnp(pyxel.KEY_A) or self._vjoy_left or \
-           pyxel.btnp(pyxel.KEY_RIGHT) or pyxel.btnp(pyxel.KEY_D) or self._vjoy_right:
-            self.is_time_attack = not self.is_time_attack; pyxel.play(1, 1)
+        if pyxel.btnp(pyxel.KEY_UP) or pyxel.btnp(pyxel.KEY_W) or self._vjoy_up:
+            self.mode_select_focus = (self.mode_select_focus - 1) % 3
+            pyxel.play(1, 1)
+        if pyxel.btnp(pyxel.KEY_DOWN) or pyxel.btnp(pyxel.KEY_S) or self._vjoy_dn:
+            self.mode_select_focus = (self.mode_select_focus + 1) % 3
+            pyxel.play(1, 1)
         if pyxel.btnp(pyxel.KEY_SPACE) or self._vjoy_space:
+            self.is_grand_prix = self.mode_select_focus == 0
+            self.is_time_attack = self.mode_select_focus == 1
+            if not self.is_grand_prix:
+                self._reset_grand_prix_state()
+            if self.is_grand_prix:
+                self.goal_laps = 3
+                self._apply_grand_prix_fixed_settings(self.selected_cup)
             self._start_fade(self.STATE_COURSE_SELECT); pyxel.play(1, 2)
         if (pyxel.btnp(pyxel.KEY_ESCAPE) or self._vjoy_esc):
             self._start_fade(self.STATE_MENU); pyxel.play(1, 1)
@@ -195,9 +219,18 @@ class AppUpdateMenuMixin:
             if pyxel.btnp(pyxel.KEY_DOWN, 10, 2) or pyxel.btnp(pyxel.KEY_S, 10, 2) or \
                pyxel.btnp(pyxel.KEY_LEFT, 10, 2) or pyxel.btnp(pyxel.KEY_A, 10, 2) or self._vjoy_dn:
                 self.goal_laps = max(1, self.goal_laps - 1); pyxel.play(1, 1)
-        # 決定 → 昼夜・難易度選択へ（フェード）
+        # 決定
         if pyxel.btnp(pyxel.KEY_SPACE) or self._vjoy_space:
-            self.time_sel_focus = 0; self._start_fade(self.STATE_TIME_SELECT); pyxel.play(1, 2)
+            if self.is_grand_prix:
+                self._apply_grand_prix_fixed_settings(self.selected_cup)
+                self._prepare_grand_prix_for_start()
+                self._prime_grand_prix_race()
+                self.reset()
+                self._start_fade(self.STATE_PLAY)
+            else:
+                self.time_sel_focus = 0
+                self._start_fade(self.STATE_TIME_SELECT)
+            pyxel.play(1, 2)
         if (pyxel.btnp(pyxel.KEY_ESCAPE) or self._vjoy_esc):
             self._start_fade(self.STATE_MODE_SELECT); pyxel.play(1, 1)
         # [E] コースメーカーへ
@@ -205,7 +238,7 @@ class AppUpdateMenuMixin:
             self._maker_reset(); self._start_fade(self.STATE_COURSE_MAKER); pyxel.play(1, 1)
         # [DEL] 削除確認
         if (pyxel.btnp(pyxel.KEY_DELETE) or pyxel.btnp(pyxel.KEY_BACKSPACE)) \
-                and self.selected_course >= 4:
+                and self.selected_course >= self.DEFAULT_COURSE_COUNT:
             self.cs_del_confirm = True; pyxel.play(1, 1)
         # [R] ランキング画面（タイムアタックのみ）
         if self.is_time_attack and pyxel.btnp(pyxel.KEY_R):
@@ -312,6 +345,10 @@ class AppUpdateMenuMixin:
             elif kind == "rivals":
                 pass  # 左右キーで操作するため SPACE は無視
             elif kind == "start":
+                if self.is_grand_prix:
+                    self._apply_grand_prix_fixed_settings(self.selected_cup)
+                    self._prepare_grand_prix_for_start()
+                    self._prime_grand_prix_race()
                 self.reset(); self._start_fade(self.STATE_PLAY); pyxel.play(1, 2)
 
         if (pyxel.btnp(pyxel.KEY_ESCAPE) or self._vjoy_esc):
@@ -325,4 +362,3 @@ class AppUpdateMenuMixin:
 
     def _update_state_ranking(self):
         if (pyxel.btnp(pyxel.KEY_ESCAPE) or self._vjoy_esc): self._start_fade(self.STATE_COURSE_SELECT); pyxel.play(1, 1)
-

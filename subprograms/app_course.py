@@ -47,7 +47,7 @@ class AppCourseMixin:
 
         def _save_custom_courses(self):
             """COURSES[4:] を保存 (Web/PC両対応)"""
-            customs = self.COURSES[4:]
+            customs = self.COURSES[self.DEFAULT_COURSE_COUNT:]
             if IS_WEB:
                 try:
                     js.window.localStorage.setItem("highway_racer_custom_courses", json.dumps(customs))
@@ -62,7 +62,7 @@ class AppCourseMixin:
 
         def _delete_custom_course(self, idx):
             """指定インデックスのカスタムコースを削除"""
-            if idx < 4:
+            if idx < self.DEFAULT_COURSE_COUNT:
                 return
             name = self.COURSES[idx]['name']
             key    = self._course_key(idx)
@@ -86,16 +86,33 @@ class AppCourseMixin:
         def _calc_smooth_points(self, control_points):
             """制御点からCatmull-Romスプラインで滑らかな点列を生成して返す"""
             def catmull_rom(p0, p1, p2, p3, t):
-                t2 = t * t
-                t3 = t2 * t
-                f1 = -0.5 * t3 + t2 - 0.5 * t
-                f2 = 1.5 * t3 - 2.5 * t2 + 1.0
-                f3 = -1.5 * t3 + 2.0 * t2 + 0.5 * t
-                f4 = 0.5 * t3 - 0.5 * t2
-                return (
-                    p0[0] * f1 + p1[0] * f2 + p2[0] * f3 + p3[0] * f4,
-                    p0[1] * f1 + p1[1] * f2 + p2[1] * f3 + p3[1] * f4
-                )
+                alpha = 0.5
+
+                def tj(ti, pa, pb):
+                    return ti + max(math.hypot(pb[0] - pa[0], pb[1] - pa[1]) ** alpha, 1e-4)
+
+                t0 = 0.0
+                t1 = tj(t0, p0, p1)
+                t2 = tj(t1, p1, p2)
+                t3 = tj(t2, p2, p3)
+                tt = t1 + (t2 - t1) * t
+
+                def lerp(pa, pb, ta, tb):
+                    if abs(tb - ta) < 1e-6:
+                        return pa
+                    w0 = (tb - tt) / (tb - ta)
+                    w1 = (tt - ta) / (tb - ta)
+                    return (
+                        pa[0] * w0 + pb[0] * w1,
+                        pa[1] * w0 + pb[1] * w1,
+                    )
+
+                a1 = lerp(p0, p1, t0, t1)
+                a2 = lerp(p1, p2, t1, t2)
+                a3 = lerp(p2, p3, t2, t3)
+                b1 = lerp(a1, a2, t0, t2)
+                b2 = lerp(a2, a3, t1, t3)
+                return lerp(b1, b2, t1, t2)
             smooth_points = []
             n = len(control_points)
             for i in range(n):
@@ -103,10 +120,121 @@ class AppCourseMixin:
                 p1 = control_points[i]
                 p2 = control_points[(i + 1) % n]
                 p3 = control_points[(i + 2) % n]
-                for j in range(15):
-                    t = j / 15.0
+                for j in range(18):
+                    t = j / 18.0
                     smooth_points.append(catmull_rom(p0, p1, p2, p3, t))
             return smooth_points
+
+        def _nearest_track_index(self, points, target):
+            tx, ty = target
+            return min(
+                range(len(points)),
+                key=lambda i: (points[i][0] - tx) ** 2 + (points[i][1] - ty) ** 2,
+            )
+
+        def _generate_checkpoint_indices(self, total_points, count):
+            count = max(4, int(count))
+            indices = [int(round(total_points * i / count)) % total_points for i in range(1, count)]
+            indices.append(0)
+            return indices
+
+        def _start_line_segment(self, course):
+            cx, cy, angle, half_width = course["start_line"]
+            perp = angle + math.pi / 2
+            x1 = cx - math.cos(perp) * half_width
+            y1 = cy - math.sin(perp) * half_width
+            x2 = cx + math.cos(perp) * half_width
+            y2 = cy + math.sin(perp) * half_width
+            return (x1, y1), (x2, y2)
+
+        def _point_on_start_line(self, x, y, course, tol=2.5):
+            (x1, y1), (x2, y2) = self._start_line_segment(course)
+            dx = x2 - x1
+            dy = y2 - y1
+            len2 = dx * dx + dy * dy
+            if len2 <= 1e-9:
+                return False
+            t = ((x - x1) * dx + (y - y1) * dy) / len2
+            if t < 0.0 or t > 1.0:
+                return False
+            proj_x = x1 + dx * t
+            proj_y = y1 + dy * t
+            return math.hypot(x - proj_x, y - proj_y) <= tol
+
+        def _car_crossed_start_line(self, prev_x, prev_y, cur_x, cur_y, course):
+            if self._point_on_start_line(cur_x, cur_y, course):
+                return True
+
+            cx, cy, angle, _ = course["start_line"]
+            nx = math.cos(angle)
+            ny = math.sin(angle)
+            prev_side = (prev_x - cx) * nx + (prev_y - cy) * ny
+            cur_side = (cur_x - cx) * nx + (cur_y - cy) * ny
+            if prev_side >= 0 or cur_side < 0:
+                return False
+
+            (x1, y1), (x2, y2) = self._start_line_segment(course)
+            min_x = min(x1, x2) - 2.5
+            max_x = max(x1, x2) + 2.5
+            min_y = min(y1, y2) - 2.5
+            max_y = max(y1, y2) + 2.5
+            if max(prev_x, cur_x) < min_x or min(prev_x, cur_x) > max_x:
+                return False
+            if max(prev_y, cur_y) < min_y or min(prev_y, cur_y) > max_y:
+                return False
+            return True
+
+        def _normalize_course_definition(self, course):
+            control_points = [tuple(p) for p in course.get("control_points", [])]
+            if len(control_points) < 2:
+                return
+
+            course["control_points"] = control_points
+            course.setdefault("scenery", {"theme": "default"})
+
+            sx, sy = control_points[0]
+            nx, ny = control_points[1]
+            start_angle = math.atan2(ny - sy, nx - sx)
+            course["start_pos"] = (float(sx), float(sy))
+            course["start_angle"] = start_angle
+            course["start_line"] = [float(sx), float(sy), float(start_angle), float(course["road_outer"])]
+
+            smooth_points = self._calc_smooth_points(control_points)
+            total = len(smooth_points)
+            raw_checkpoints = [tuple(p) for p in course.get("checkpoints", [])]
+            requested_count = len(raw_checkpoints) if raw_checkpoints else (6 if len(control_points) >= 18 else 5)
+
+            projected = []
+            for cp in raw_checkpoints:
+                idx = self._nearest_track_index(smooth_points, cp)
+                projected.append(total if idx == 0 else idx)
+
+            projected = sorted(set(projected))
+            if projected and projected[-1] != total:
+                projected.append(total)
+
+            min_gap = max(18, total // max(requested_count * 3, 1))
+            gaps_ok = (
+                len(projected) >= max(4, requested_count)
+                and projected[0] >= min_gap
+                and all((b - a) >= min_gap for a, b in zip(projected, projected[1:]))
+            )
+            if not gaps_ok:
+                projected = [
+                    total if idx == 0 else idx
+                    for idx in self._generate_checkpoint_indices(total, requested_count)
+                ]
+
+            course["checkpoints"] = [
+                tuple(int(round(v)) for v in smooth_points[idx % total])
+                for idx in projected
+            ]
+            course["_checkpoint_indices"] = [idx % total for idx in projected]
+            if course["checkpoints"]:
+                course["checkpoints"][-1] = (
+                    int(round(course["start_pos"][0])),
+                    int(round(course["start_pos"][1])),
+                )
 
         def _build_map(self, course_idx):
             """指定コースのマップデータをイメージバンク1に描画する"""
@@ -229,4 +357,3 @@ class AppCourseMixin:
                 offset = -norm_c * max_offset
                 racing_line.append((px + nx * offset, py + ny * offset))
             return racing_line
-

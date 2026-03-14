@@ -2,11 +2,15 @@ from .common import *
 
 
 class AppDrawMenuMixin:
+        def _draw_header_level_text(self, x, y, col=10):
+            level = int(self.stats.get("player_level", 0))
+            pyxel.text(x, y, f"LV:{level}", col)
+
         def draw_title_screen(self):
             for i in range(10):
                 y = (pyxel.frame_count * 2 + i * 20) % pyxel.height
                 pyxel.line(0, y, pyxel.width, y, 1)
-            pyxel.text(pyxel.width/2 - 40, 70, "REAL DRIVING SIMULATER", 10)
+            pyxel.text(pyxel.width/2 - 40, 70, "REAL DRIVING SIMULATOR", 10)
             pyxel.blt(0, 40, 2, 0, 0, 255, 30, 229, scale=0.7)
             if (pyxel.frame_count // 15) % 2 == 0:
                 pyxel.text(pyxel.width/2 - 30, 100, "PUSH SPACE KEY", 7)
@@ -188,8 +192,18 @@ class AppDrawMenuMixin:
             # 走行距離はワールド単位→画面表示用スケール (約1単位≒1m想定で km 換算)
             dist_km = self.stats.get("total_distance", 0.0) * 0.001
             dist_str = f"{dist_km:.2f} km"
+            level = int(self.stats.get("player_level", 0))
+            xp = int(self.stats.get("player_xp", 0))
+            req_xp = max(1, self.get_required_xp_for_level(level))
+            if level >= getattr(self, "MAX_PLAYER_LEVEL", 50):
+                xp_str = "MAX"
+                xp_ratio = 1.0
+            else:
+                xp_str = f"{xp}/{req_xp}"
+                xp_ratio = max(0.0, min(xp / req_xp, 1.0))
 
             rows = [
+                ("PLAYER LEVEL",     f"{self.stats.get('player_level', 0)}"),
                 ("RACES ENTERED",    f"{self.stats.get('race_count', 0)}"),
                 ("1ST PLACE WINS",   f"{self.stats.get('first_count', 0)}"),
                 ("WIN RATE",         f"{(self.stats.get('first_count',0)/max(self.stats.get('race_count',1),1)*100):.1f}%"),
@@ -206,7 +220,9 @@ class AppDrawMenuMixin:
                 label_col = 6
                 val_col   = 7
                 # 特別な行を強調
-                if label == "1ST PLACE WINS":
+                if label == "PLAYER LEVEL":
+                    val_col = 10
+                elif label == "1ST PLACE WINS":
                     val_col = 10
                 elif label == "TOTAL EARNED CR":
                     val_col = 9
@@ -216,40 +232,49 @@ class AppDrawMenuMixin:
                 # 区切り線
                 pyxel.line(px + 4, ry + line_h - 3, px + pw - 5, ry + line_h - 3, 1)
 
+                if label == "PLAYER LEVEL":
+                    bar_x = px + 96
+                    bar_y = ry + 3
+                    bar_w = 72
+                    pyxel.rect(bar_x, bar_y, bar_w, 6, 1)
+                    pyxel.rect(bar_x, bar_y, int(bar_w * xp_ratio), 6, 11 if level < self.MAX_PLAYER_LEVEL else 10)
+                    pyxel.rectb(bar_x, bar_y, bar_w, 6, 5)
+                    pyxel.text(bar_x + bar_w + 6, ry + 2, xp_str, 6)
+
             # ── フッター ──
             pyxel.text(W // 2 - 28, H - 12, "ESC: BACK TO MENU", 5)
 
         def draw_mode_select_screen(self):
             cx = pyxel.width // 2 - 90
-            cy = pyxel.height // 2 - 50
-            pyxel.rectb(cx, cy, 180, 100, 10)
+            cy = pyxel.height // 2 - 62
+            pyxel.rectb(cx, cy, 180, 124, 10)
             pyxel.text(cx + 65, cy + 8, "SELECT MODE", 10)
 
-            # TIME ATTACK
-            ta_col = 10 if self.is_time_attack else 5
-            ta_border = 9 if self.is_time_attack else 5
-            pyxel.rectb(cx + 10, cy + 28, 70, 38, ta_border)
-            if self.is_time_attack:
-                pyxel.rect(cx + 11, cy + 29, 68, 36, 1)
-            pyxel.text(cx + 16, cy + 34, "TIME ATTACK", ta_col)
-            pyxel.text(cx + 14, cy + 44, "Solo / Best Lap", 6)
-            pyxel.text(cx + 18, cy + 54, "No lap limit", 5)
+            cards = [
+                ("GRAND PRIX", "vs Rivals", "Fixed lap count", 8),
+                ("TIME ATTACK", "Solo / Best Lap", "No lap limit", 10),
+                ("CUSTOM RACE", "Set your own", "race rules", 11),
+            ]
+            for i, (title, sub1, sub2, accent) in enumerate(cards):
+                by = cy + 24 + i * 28
+                selected = self.mode_select_focus == i
+                border = accent if selected else 5
+                title_col = 10 if selected else 5
+                if selected:
+                    pyxel.rect(cx + 12, by, 156, 24, 1)
+                pyxel.rectb(cx + 12, by, 156, 24, border)
+                if selected:
+                    if (pyxel.frame_count // 8) % 2 == 0:
+                        pyxel.text(cx + 16, by + 4, ">", 10)
+                pyxel.text(cx + 20, by + 4, title, title_col)
+                pyxel.text(cx + 20, by + 13, sub1, 6 if not selected else 7)
+                pyxel.text(cx + 96, by + 13, sub2, 5 if not selected else 7)
 
-            # RACE
-            rc_col = 10 if not self.is_time_attack else 5
-            rc_border = 9 if not self.is_time_attack else 5
-            pyxel.rectb(cx + 100, cy + 28, 70, 38, rc_border)
-            if not self.is_time_attack:
-                pyxel.rect(cx + 101, cy + 29, 68, 36, 1)
-            pyxel.text(cx + 116, cy + 34, "RACE", rc_col)
-            pyxel.text(cx + 104, cy + 44, "vs Rivals", 6)
-            pyxel.text(cx + 102, cy + 54, "Fixed lap count", 5)
-
-            pyxel.text(cx + 20, cy + 74, "A/D: SELECT", 6)
+            pyxel.text(cx + 18, cy + 110, "W/S: SELECT", 6)
 
             blink_col = 10 if (pyxel.frame_count // 15) % 2 == 0 else 7
-            pyxel.text(cx + 90, cy + 74, "SPACE: NEXT", blink_col)
-            pyxel.text(cx + 155, cy + 74, "ESC", 6)
+            pyxel.text(cx + 78, cy + 110, "SPACE: NEXT", blink_col)
+            pyxel.text(cx + 146, cy + 110, "ESC", 6)
 
         def draw_course_select_screen(self):
             W, H = pyxel.width, pyxel.height
@@ -306,17 +331,17 @@ class AppDrawMenuMixin:
                 pyxel.text(rx, ry + 14, "TIME", 9)
                 pyxel.text(rx, ry + 22, "ATTACK", 9)
 
-            # [E] MAKER ボタン
-            pyxel.rect(rx - 2, ry + 36, 46, 12, 1)
-            pyxel.rectb(rx - 2, ry + 36, 46, 12, 14)
-            pyxel.text(rx, ry + 39, "[E] MAKER", 14)
+            if self.stats.get("player_level", 0) >= 50:
+                pyxel.rect(rx - 2, ry + 36, 46, 12, 1)
+                pyxel.rectb(rx - 2, ry + 36, 46, 12, 14)
+                pyxel.text(rx, ry + 39, "[E] MAKER", 14)
 
             # ── 操作ヒント ──
             pyxel.text(4, H - 16, "A/D: COURSE", 6)
             blink_col = 10 if (pyxel.frame_count // 15) % 2 == 0 else 7
             pyxel.text((W - 72) // 2, H - 10, "SPACE: SELECT", blink_col)
             pyxel.text(W - 44, H - 16, "ESC: BACK", 5)
-            if self.selected_course >= 4:
+            if self.selected_course >= self.DEFAULT_COURSE_COUNT:
                 pyxel.text(4, H - 8, "[DEL]:DELETE", 8)
             if self.is_time_attack:
                 pyxel.text(W - 56, H - 8, "[R]:RANKING", 9)
@@ -395,6 +420,11 @@ class AppDrawMenuMixin:
 
         def draw_time_select_screen(self):
             W, H = pyxel.width, pyxel.height
+            player_level = self.stats.get("player_level", 0)
+            night_unlocked = player_level >= 10
+            if not night_unlocked and self.is_night_mode:
+                self.is_night_mode = False
+
             if self.is_night_mode:
                 sky_top, sky_bot = 1, 2
             else:
@@ -404,13 +434,15 @@ class AppDrawMenuMixin:
                 col = sky_bot if (y % 2 == 0 and t > 0.4) else sky_top
                 pyxel.line(0, y, W, y, col)
 
-            # ── タイトルバー ──
             pyxel.rect(0, 0, W, 14, 1)
-            cd = self.COURSES[self.selected_course]
-            hdr = f"TIME SELECT  [{cd['name']}]" if self.is_time_attack else f"TIME & DIFFICULTY  [{cd['name']}]"
-            pyxel.text((W - len(hdr)*4) // 2, 4, hdr, 10)
+            if self.is_grand_prix:
+                cup = self.GRAND_PRIX_CUPS[self.selected_cup % len(self.GRAND_PRIX_CUPS)]
+                hdr = f"GRAND PRIX SETTINGS  [{cup['name']}]"
+            else:
+                cd = self.COURSES[self.selected_course]
+                hdr = f"TIME SELECT  [{cd['name']}]" if self.is_time_attack else f"TIME & DIFFICULTY  [{cd['name']}]"
+            pyxel.text((W - len(hdr) * 4) // 2, 4, hdr, 10)
 
-            # フォーカスマップ（updateと完全に同じ定義）
             if self.is_time_attack:
                 focus_map = {0: "day", 1: "night", 2: "ghost_on", 3: "ghost_off", 4: "start"}
             else:
@@ -422,7 +454,6 @@ class AppDrawMenuMixin:
 
             blink = (pyxel.frame_count // 8) % 2 == 0
 
-            # ── DAY / NIGHT ボタン ──
             btn_w, btn_h = 90, 52
             gap = 12
             bx = (W - (btn_w * 2 + gap)) // 2
@@ -431,24 +462,22 @@ class AppDrawMenuMixin:
             for night in (False, True):
                 kind = "night" if night else "day"
                 bx_n = bx if not night else bx + btn_w + gap
-                is_sel = (self.is_night_mode == night)
+                is_sel = self.is_night_mode == night
                 focused = is_focused(kind)
 
-                # 背景色: フォーカス=明るいハイライト / 選択済=テーマ色 / 通常=暗い
                 if focused:
-                    bg_col  = 7   # 白に近い明るい背景
+                    bg_col = 7
                     brd_col = 10 if not night else 12
                 elif is_sel:
-                    bg_col  = 2 if night else 9
+                    bg_col = 2 if night else 9
                     brd_col = 12 if night else 10
                 else:
-                    bg_col  = 1
+                    bg_col = 1
                     brd_col = 5
 
                 pyxel.rect(bx_n, by, btn_w, btn_h, bg_col)
                 pyxel.rectb(bx_n, by, btn_w, btn_h, brd_col)
 
-                # フォーカス枠: 太い二重枠を点滅させる
                 if focused:
                     fc = brd_col if blink else 0
                     pyxel.rectb(bx_n + 1, by + 1, btn_w - 2, btn_h - 2, fc)
@@ -456,7 +485,6 @@ class AppDrawMenuMixin:
                 elif is_sel:
                     pyxel.rectb(bx_n + 1, by + 1, btn_w - 2, btn_h - 2, brd_col)
 
-                # アイコン描画
                 cx_ = bx_n + btn_w // 2
                 cy_ = by + 22
                 if not night:
@@ -464,45 +492,52 @@ class AppDrawMenuMixin:
                     pyxel.circ(cx_, cy_, 7, 9)
                     for a in range(0, 360, 30):
                         r = math.radians(a)
-                        pyxel.line(cx_ + math.cos(r)*13, cy_ + math.sin(r)*13,
-                                   cx_ + math.cos(r)*16, cy_ + math.sin(r)*16, 10)
+                        pyxel.line(
+                            cx_ + math.cos(r) * 13,
+                            cy_ + math.sin(r) * 13,
+                            cx_ + math.cos(r) * 16,
+                            cy_ + math.sin(r) * 16,
+                            10,
+                        )
                     lbl, lcol = "DAY", 10
                 else:
-                    # 月本体（明るい黄色系）
-                    pyxel.circ(cx_, cy_, 9, 7)
-                    # 欠け部分は空の色で塗る（ボタン背景色ではなく空色を使う）
-                    moon_bg = 2 if self.is_night_mode else 1  # 夜=紺、昼=黒
-                    pyxel.circ(cx_ + 5, cy_ - 3, 7, moon_bg)
-                    # 星（背景が白のフォーカス時は黒、それ以外は白）
-                    star_col = 0 if focused else 7
-                    for sx_, sy_ in [(cx_+14, cy_-7), (cx_+13, cy_+3), (cx_+6, cy_+10)]:
-                        pyxel.pset(sx_, sy_, star_col)
-                        pyxel.pset(sx_+1, sy_, star_col)
+                    if night_unlocked:
+                        pyxel.circ(cx_, cy_, 9, 7)
+                        moon_bg = 2 if self.is_night_mode else 1
+                        pyxel.circ(cx_ + 5, cy_ - 3, 7, moon_bg)
+                        star_col = 0 if focused else 7
+                        for sx_, sy_ in [(cx_ + 14, cy_ - 7), (cx_ + 13, cy_ + 3), (cx_ + 6, cy_ + 10)]:
+                            pyxel.pset(sx_, sy_, star_col)
+                            pyxel.pset(sx_ + 1, sy_, star_col)
+                    else:
+                        pyxel.circ(cx_, cy_, 10, 0)
+                        pyxel.circ(cx_, cy_, 7, 0)
+                        pyxel.blt(cx_ - 9, cy_ - 11, 2, 0, 32, 18, 19, 229)
                     lbl, lcol = "NIGHT", 12
 
-                # ラベルテキスト
                 lbl_col = 0 if focused else (lcol if is_sel else 5)
-                pyxel.text(bx_n + (btn_w - len(lbl)*4)//2, by + 5, lbl, lbl_col)
+                pyxel.text(bx_n + (btn_w - len(lbl) * 4) // 2, by + 5, lbl, lbl_col)
 
-                # 状態テキスト
-                if focused and is_sel:
+                if night and not night_unlocked:
+                    st = "UNLOCK AT LV10"
+                    pyxel.text(bx_n + (btn_w - len(st) * 4) // 2, by + btn_h - 11, st, 8)
+                elif focused and is_sel:
                     st = "<<< SELECTED >>>" if blink else "< PRESS SPACE >"
-                    pyxel.text(bx_n + (btn_w - len(st)*4)//2, by + btn_h - 11, st, brd_col)
+                    pyxel.text(bx_n + (btn_w - len(st) * 4) // 2, by + btn_h - 11, st, brd_col)
                 elif focused:
                     st = ">>> PRESS SPACE" if blink else "<<< PRESS SPACE"
-                    pyxel.text(bx_n + (btn_w - len(st)*4)//2, by + btn_h - 11, st, brd_col)
+                    pyxel.text(bx_n + (btn_w - len(st) * 4) // 2, by + btn_h - 11, st, brd_col)
                 elif is_sel:
                     st = "* SELECTED *"
-                    pyxel.text(bx_n + (btn_w - len(st)*4)//2, by + btn_h - 11, st, brd_col)
+                    pyxel.text(bx_n + (btn_w - len(st) * 4) // 2, by + btn_h - 11, st, brd_col)
 
-            # ── 難易度選択パネル ──
             dy_top = by + btn_h + 6
 
             if not self.is_time_attack:
                 DIFF_LABELS = ["EASY", "NORMAL", "HARD"]
-                DIFF_KINDS  = ["easy", "normal", "hard"]
-                DIFF_COLS   = [11, 10, 8]
-                DIFF_DESC   = ["x0.5 Prize", "x0.75 Prize", "x1.0 Prize"]
+                DIFF_KINDS = ["easy", "normal", "hard"]
+                DIFF_COLS = [11, 10, 8]
+                DIFF_DESC = ["x0.7 Prize", "x1.0 Prize", "x1.5 Prize"]
                 dpw, dph = W - 32, 42
                 dpx = 16
                 pyxel.rect(dpx, dy_top, dpw, dph, 0)
@@ -515,7 +550,7 @@ class AppDrawMenuMixin:
                     sy = dy_top + 12
                     sw = slot_w - 4
                     sh = 26
-                    is_d = (self.difficulty == i)
+                    is_d = self.difficulty == i
                     focused = is_focused(dkind)
 
                     if focused:
@@ -535,21 +570,20 @@ class AppDrawMenuMixin:
                         pyxel.rectb(sx + 1, sy + 1, sw - 2, sh - 2, fc2)
 
                     txt_col = 0 if focused else (dcol if is_d else 5)
-                    pyxel.text(sx + (sw - len(lbl)*4)//2, sy + 5, lbl, txt_col)
+                    pyxel.text(sx + (sw - len(lbl) * 4) // 2, sy + 5, lbl, txt_col)
 
                     if is_d and not focused:
                         desc = DIFF_DESC[i]
-                        pyxel.text(sx + (sw - len(desc)*4)//2, sy + 17, desc, dcol)
+                        pyxel.text(sx + (sw - len(desc) * 4) // 2, sy + 17, desc, dcol)
                     elif focused:
                         st2 = "SPACE:SET" if not is_d else "SELECTED!"
                         st2_col = br_d if blink else 0
-                        pyxel.text(sx + (sw - len(st2)*4)//2, sy + 17, st2, st2_col)
+                        pyxel.text(sx + (sw - len(st2) * 4) // 2, sy + 17, st2, st2_col)
 
                 sby = dy_top + dph + 5
             else:
                 sby = dy_top
 
-            # ── ライバル台数選択パネル（レースモード時のみ）──
             if not self.is_time_attack:
                 rpw, rph = W - 32, 22
                 rpx = 16
@@ -561,24 +595,22 @@ class AppDrawMenuMixin:
                 pyxel.rectb(rpx, rpy, rpw, rph, rbr)
                 if rivals_focused:
                     rfc = rbr if blink else 0
-                    pyxel.rectb(rpx+1, rpy+1, rpw-2, rph-2, rfc)
+                    pyxel.rectb(rpx + 1, rpy + 1, rpw - 2, rph - 2, rfc)
 
                 label_col = 0 if rivals_focused else 7
                 pyxel.text(rpx + 4, rpy + 3, "RIVALS:", label_col)
 
-                # ◀ 数字 ▶ の形で表示
-                nr = getattr(self, 'num_rivals', 3)
+                nr = getattr(self, "num_rivals", 3)
                 arrow_col = 0 if rivals_focused else 10
                 num_str = f"{nr:2d}"
                 nx_center = rpx + rpw // 2
                 pyxel.text(nx_center - 16, rpy + 3, "< ", arrow_col)
-                pyxel.text(nx_center - 4,  rpy + 3, num_str, 0 if rivals_focused else 10)
-                pyxel.text(nx_center + 8,  rpy + 3, " >", arrow_col)
+                pyxel.text(nx_center - 4, rpy + 3, num_str, 0 if rivals_focused else 10)
+                pyxel.text(nx_center + 8, rpy + 3, " >", arrow_col)
 
-                # ヒント
                 hint = "" if rivals_focused else f"{nr} car{'s' if nr > 1 else ''}  (1-11)"
                 hcol = 0 if rivals_focused else 5
-                pyxel.text(rpx + rpw - len(hint)*4 - 4, rpy + 3, hint, hcol)
+                pyxel.text(rpx + rpw - len(hint) * 4 - 4, rpy + 3, hint, hcol)
 
                 sby = rpy + rph + 5
             if self.is_time_attack:
@@ -591,59 +623,59 @@ class AppDrawMenuMixin:
                 pyxel.text(gpx + 4, gpy + 3, "GHOST:", 7)
 
                 GHOST_LABELS = ["ON", "OFF"]
-                GHOST_KINDS  = ["ghost_on", "ghost_off"]
-                GHOST_COLS   = [11, 8]
+                GHOST_KINDS = ["ghost_on", "ghost_off"]
+                GHOST_COLS = [11, 8]
                 gslot_w = (gpw - 8) // 2
                 for gi, (glbl, gkind, gcol) in enumerate(zip(GHOST_LABELS, GHOST_KINDS, GHOST_COLS)):
                     gsx = gpx + 4 + gi * gslot_w
                     gsy = gpy + 14
                     gsw = gslot_w - 4
                     gsh = 22
-                    g_active = (self.ghost_enabled == (gi == 0))
+                    g_active = self.ghost_enabled == (gi == 0)
                     g_focused = is_focused(gkind)
                     if g_focused:
-                        gbg = 7; gbr = gcol
+                        gbg = 7
+                        gbr = gcol
                     elif g_active:
-                        gbg = 1; gbr = gcol
+                        gbg = 1
+                        gbr = gcol
                     else:
-                        gbg = 0; gbr = 5
+                        gbg = 0
+                        gbr = 5
                     pyxel.rect(gsx, gsy, gsw, gsh, gbg)
                     pyxel.rectb(gsx, gsy, gsw, gsh, gbr)
                     if g_focused:
                         gfc = gbr if blink else 0
-                        pyxel.rectb(gsx+1, gsy+1, gsw-2, gsh-2, gfc)
+                        pyxel.rectb(gsx + 1, gsy + 1, gsw - 2, gsh - 2, gfc)
                     gtxt_col = 0 if g_focused else (gcol if g_active else 5)
-                    pyxel.text(gsx + (gsw - len(glbl)*4)//2, gsy + 4, glbl, gtxt_col)
-                    # ゴーストデータなし表示
+                    pyxel.text(gsx + (gsw - len(glbl) * 4) // 2, gsy + 4, glbl, gtxt_col)
                     if gi == 0 and not has_ghost:
                         nd = "NO DATA"
-                        pyxel.text(gsx + (gsw - len(nd)*4)//2, gsy + 13, nd, 5)
+                        pyxel.text(gsx + (gsw - len(nd) * 4) // 2, gsy + 13, nd, 5)
                 sby = gpy + gph + 8
 
-            # ── START ボタン ──
             sbw, sbh = 180, 18
             sbx = (W - sbw) // 2
             start_focused = is_focused("start")
 
             if start_focused:
-                bg_s  = 10 if blink else 9
+                bg_s = 10 if blink else 9
                 brd_s = 7
-                txt   = ">>> SPACE : START RACE <<<"
-                tc    = 0
+                txt = ">>> SPACE : START RACE <<<"
+                tc = 0
             else:
-                bg_s  = 1
+                bg_s = 1
                 brd_s = 5
-                txt   = "START RACE"
-                tc    = 5
+                txt = "START RACE"
+                tc = 5
 
             pyxel.rect(sbx, sby, sbw, sbh, bg_s)
             pyxel.rectb(sbx, sby, sbw, sbh, brd_s)
             if start_focused:
                 fc3 = brd_s if blink else bg_s
                 pyxel.rectb(sbx + 1, sby + 1, sbw - 2, sbh - 2, fc3)
-            pyxel.text(sbx + (sbw - len(txt)*4)//2, sby + 5, txt, tc)
+            pyxel.text(sbx + (sbw - len(txt) * 4) // 2, sby + 5, txt, tc)
 
-            # ── 操作ヒント ──
             pyxel.text(4, H - 10, "WASD: MOVE   SPACE: SELECT   ESC: BACK", 5)
 
         def draw_customize_screen(self):
@@ -655,6 +687,7 @@ class AppDrawMenuMixin:
             pyxel.text(W // 2 - 36, 4, "CAR  CUSTOMIZE", 14)
 
             # ── クレジット表示 ──
+            self._draw_header_level_text(4, 4, 10)
             cr_str = f"CR: {self.credits:,}"
             pyxel.text(W - len(cr_str) * 4 - 4, 4, cr_str, 10)
 
@@ -735,6 +768,9 @@ class AppDrawMenuMixin:
                 cur_lv    = self.car_data[lv_key]
                 next_lv   = cur_lv + 1
                 cost      = next_lv * cost_mult if cur_lv < 10 else 0
+                player_level = int(self.stats.get("player_level", 0))
+                req_plv = self.get_required_player_level_for_part_level(next_lv) if cur_lv < 10 else 0
+                unlocked = cur_lv >= 10 or player_level >= req_plv
 
                 # 現在レベル表示
                 cx = W // 2
@@ -752,9 +788,13 @@ class AppDrawMenuMixin:
 
                 # コスト
                 if cur_lv < 10:
-                    cost_str = f"NEXT LV{next_lv}: {cost:,} CR"
-                    can_afford = self.credits >= cost
-                    cost_col = 10 if can_afford else 8
+                    if unlocked:
+                        cost_str = f"NEXT LV{next_lv}: {cost:,} CR"
+                        can_afford = self.credits >= cost
+                        cost_col = 10 if can_afford else 8
+                    else:
+                        cost_str = f"UNLOCK AT LV{req_plv}"
+                        cost_col = 5
                     pyxel.text(cx - len(cost_str) * 2, bar_y + 14, cost_str, cost_col)
                 else:
                     pyxel.text(cx - 16, bar_y + 14, "MAX LEVEL!", 9)
@@ -789,7 +829,16 @@ class AppDrawMenuMixin:
                         pyxel.text(W // 2 - len(desc) * 2, stat_y + 68 + di * 8, desc, dcol)
 
                 # 操作ヒント
-                pyxel.text(W // 2 - 48, H - 22, "SPACE/ENTER: UPGRADE", 6 if cur_lv < 10 else 5)
+                if cur_lv >= 10:
+                    hint = "MAX LEVEL"
+                    hint_col = 5
+                elif unlocked:
+                    hint = "SPACE/ENTER: UPGRADE"
+                    hint_col = 6
+                else:
+                    hint = f"UNLOCKS AT PLAYER LV {req_plv}"
+                    hint_col = 5
+                pyxel.text(W // 2 - len(hint) * 2, H - 22, hint, hint_col)
 
             # ── メッセージ ──
             if self.cust_msg_timer > 0:
@@ -801,4 +850,3 @@ class AppDrawMenuMixin:
 
             # ── フッター ──
             pyxel.text(W // 2 - 28, H - 10, "ESC: BACK TO MENU", 5)
-

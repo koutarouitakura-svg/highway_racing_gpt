@@ -4,6 +4,14 @@ class PlayerProgressionMixin:
     MAX_PLAYER_LEVEL = 50
     CLEAR_XP_REWARD = 100
 
+    def get_required_player_level_for_part_level(self, part_level):
+        target = max(1, min(int(part_level), 10))
+        return max(0, (target - 1) * 3)
+
+    def get_max_unlocked_part_level(self, player_level=None):
+        lv = self.player_level if player_level is None else int(player_level)
+        return max(1, min(10, lv // 3 + 1))
+
     def get_required_xp_for_level(self, level=None):
         lv = self.player_level if level is None else int(level)
         if lv >= self.MAX_PLAYER_LEVEL:
@@ -27,7 +35,7 @@ class PlayerProgressionMixin:
 
     def _calc_distance_xp(self, distance=None):
         dist = self.session_distance if distance is None else distance
-        return max(0, int(dist)) * 0.1
+        return max(0, int(dist * 0.1))
 
     def _simulate_xp_gain(self, start_level, start_xp, amount):
         level = int(start_level)
@@ -136,15 +144,30 @@ class PlayerProgressionMixin:
             return True
         if getattr(self, 'is_time_attack', False):
             return True
-        reward_done = getattr(self, 'prize_anim_phase', 0) >= 3
         xp_pending = getattr(self, 'pending_goal_xp', 0) > 0
         xp_done = not getattr(self, 'xp_anim_active', False) and not xp_pending
+        if getattr(self, 'is_grand_prix', False):
+            if not getattr(self, 'grand_prix_result_complete', False):
+                return False
+            if not getattr(self, '_grand_prix_is_final_race', lambda: False)():
+                return True
+            return getattr(self, 'prize_anim_phase', 0) >= 3 and xp_done
+        reward_done = getattr(self, 'prize_anim_phase', 0) >= 3
         return reward_done and xp_done
 
     def _grant_session_distance_xp_now(self):
         if getattr(self, 'session_xp_awarded', False):
             return 0
         gain = self._calc_distance_xp()
+        if gain > 0:
+            self._apply_xp_gain(gain)
+        self.session_xp_awarded = True
+        return gain
+
+    def _grant_goal_xp_now(self):
+        if getattr(self, 'session_xp_awarded', False):
+            return 0
+        gain = self.CLEAR_XP_REWARD + self._calc_distance_xp()
         if gain > 0:
             self._apply_xp_gain(gain)
         self.session_xp_awarded = True

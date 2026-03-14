@@ -3,9 +3,16 @@ from .online import PeerInterpolator
 
 
 class AppUpdateRaceMixin:
+    def _stop_boost_effects(self):
+        self.is_boosting = False
+        self.boost_timer = 0
+        pyxel.stop(2)
+
     def _update_state_pause(self):
         if self.pause_quit_confirm:
             if pyxel.btnp(pyxel.KEY_SPACE) or pyxel.btnp(pyxel.KEY_RETURN) or self._vjoy_space or pyxel.btnp(pyxel.KEY_Y):
+                        if self.is_grand_prix:
+                            self._reset_grand_prix_state()
                         self.pause_quit_confirm = False; self.reset(); self._start_fade(self.STATE_MENU)
             if pyxel.btnp(pyxel.KEY_N) or (pyxel.btnp(pyxel.KEY_ESCAPE) or self._vjoy_esc):
                 self.pause_quit_confirm = False; pyxel.play(1, 1)
@@ -101,19 +108,25 @@ class AppUpdateRaceMixin:
                     self.cust_msg_timer = 90
                 else:
                     next_lv  = cur_lv + 1
-                    cost     = next_lv * cost_mult
-                    if self.credits >= cost:
-                        self.credits -= cost
-                        self.save_credits()
-                        self.car_data[lv_key] = next_lv
-                        self.save_car_data()
-                        self.cust_msg = f"UPGRADED TO LV{next_lv}! -{cost}CR"
-                        self.cust_msg_timer = 120
-                        pyxel.play(1, 2)
-                    else:
-                        self.cust_msg = f"NEED {next_lv * cost_mult}CR!"
+                    req_plv  = self.get_required_player_level_for_part_level(next_lv)
+                    if self.stats.get("player_level", 0) < req_plv:
+                        self.cust_msg = f"UNLOCK AT PLAYER LV{req_plv}!"
                         self.cust_msg_timer = 90
                         pyxel.play(1, 1)
+                    else:
+                        cost = next_lv * cost_mult
+                        if self.credits >= cost:
+                            self.credits -= cost
+                            self.save_credits()
+                            self.car_data[lv_key] = next_lv
+                            self.save_car_data()
+                            self.cust_msg = f"UPGRADED TO LV{next_lv}! -{cost}CR"
+                            self.cust_msg_timer = 120
+                            pyxel.play(1, 2)
+                        else:
+                            self.cust_msg = f"NEED {next_lv * cost_mult}CR!"
+                            self.cust_msg_timer = 90
+                            pyxel.play(1, 1)
 
         if self.cust_msg_timer > 0:
             self.cust_msg_timer -= 1
@@ -259,7 +272,8 @@ class AppUpdateRaceMixin:
             is_left  = pyxel.btn(pyxel.KEY_LEFT)  or pyxel.btn(pyxel.KEY_A)
             is_right = pyxel.btn(pyxel.KEY_RIGHT) or pyxel.btn(pyxel.KEY_D)
 
-        if (pyxel.btnp(pyxel.KEY_ESCAPE) or self._vjoy_esc) or joy_options:
+        if self.start_timer == 0 and ((pyxel.btnp(pyxel.KEY_ESCAPE) or self._vjoy_esc) or joy_options):
+            self._stop_boost_effects()
             self.state = self.STATE_PAUSE
             pyxel.stop(0)
             return
@@ -431,12 +445,20 @@ class AppUpdateRaceMixin:
                     if pyxel.play_pos(2) is None and self.state != self.STATE_PAUSE:
                         pyxel.play(2, 5, loop=True)
                     if self.boost_timer <= 0:
-                        pyxel.stop(2)
-                        self.is_boosting = False
+                        self._stop_boost_effects()
 
                 if self.boost_cooldown > 0: self.boost_cooldown -= 1
 
-        if (pyxel.btnp(pyxel.KEY_R) or (_HAS_JOY and getattr(self, '_vjoy_space', False))) and self.is_goal:
+        goal_result_pressed = (
+            pyxel.btnp(pyxel.KEY_R)
+            if self.is_time_attack
+            else (pyxel.btnp(pyxel.KEY_SPACE) or (_HAS_JOY and getattr(self, '_vjoy_space', False)))
+        )
+        if (
+            goal_result_pressed
+            and self.is_goal
+            and (self.is_time_attack or self.can_exit_goal_results())
+        ):
             pyxel.stop()
             # オンライン対戦中はロビーに戻る（再戦しやすいように）
             if self.online_client and self.online_client.connected:
@@ -451,13 +473,18 @@ class AppUpdateRaceMixin:
                 self._last_join_broadcast_t = 0
                 self.online_finish_order = []
                 self._start_fade(self.STATE_ONLINE_LOBBY); pyxel.play(1, 2)
+            elif self.is_grand_prix and getattr(self, "grand_prix_active", False):
+                self._continue_grand_prix_from_results()
+                pyxel.play(1, 2)
             else:
                 self.reset()
                 self._start_fade(self.STATE_MENU)
             return
 
+        if self.is_goal and self.is_grand_prix:
+            self._update_grand_prix_result_animation()
         # 賞金アニメーション更新
-        if self.is_goal and not self.is_time_attack:
+        elif self.is_goal and not self.is_time_attack:
             self.prize_anim_timer += 1
             if self.prize_anim_phase == 1:
                 # フェーズ1: 基本賞金を60フレームかけてカウントアップ
@@ -488,6 +515,9 @@ class AppUpdateRaceMixin:
                     self.stats["total_credits"] += total_earned
                     self.save_credits()
                     self.save_stats()
+            if not self.is_grand_prix and self.prize_anim_phase >= 3:
+                self._start_goal_xp_animation_if_needed()
+                self._update_goal_xp_animation()
 
         self.kilometer = int(self.velocity * 400) * (-1 if self.is_reverse else 1)
 
@@ -1117,8 +1147,18 @@ class AppUpdateRaceMixin:
 
             cp_x, cp_y = self.checkpoints[self.next_cp_index]
             dist_to_cp = math.hypot(self.car_world_x - cp_x, self.car_world_y - cp_y)
+            is_final_checkpoint = (self.next_cp_index == len(self.checkpoints) - 1)
+            if is_final_checkpoint:
+                prev_x = self.car_world_x - getattr(self, "vx", 0.0)
+                prev_y = self.car_world_y - getattr(self, "vy", 0.0)
+                checkpoint_passed = self._car_crossed_start_line(
+                    prev_x, prev_y, self.car_world_x, self.car_world_y,
+                    self.COURSES[self.selected_course],
+                )
+            else:
+                checkpoint_passed = dist_to_cp < 10.0
 
-            if dist_to_cp < 10.0:
+            if checkpoint_passed:
                 self.next_cp_index += 1
                 if self.next_cp_index >= len(self.checkpoints):
                     lap_time = self.lap_frame_count / 30.0
@@ -1148,6 +1188,7 @@ class AppUpdateRaceMixin:
                     if not self.is_time_attack and self.current_lap > self.goal_laps:
                         self.current_lap = self.goal_laps
                         self.is_goal = True
+                        self._stop_boost_effects()
                         pyxel.sounds[0].volumes[0] = 2
                         pyxel.play(3, 3)
                         # ゴール時の最終順位を記録
@@ -1175,7 +1216,7 @@ class AppUpdateRaceMixin:
                             else:
                                 t = (rk - 1) / (total_cars - 1)  # 0.0(1位)〜1.0(最下位)
                                 rank_prizes[rk] = int(1000 * (1 - t) + 50 * t)
-                        prize_diff_mult = [0.5, 0.75, 1.0][self.difficulty]
+                        prize_diff_mult = [0.7, 1.0, 1.5][self.difficulty]
                         base_prize = int(rank_prizes.get(self.goal_rank, 0) * self.goal_laps * prize_diff_mult)
                         clean_bonus = int(base_prize * 0.5) if self.collision_count == 0 else 0
                         self.prize_amount = base_prize
@@ -1189,7 +1230,10 @@ class AppUpdateRaceMixin:
                             self.stats["first_count"] += 1
                         self.stats["total_distance"] += self.session_distance
                         self.stats["total_frames"]   += self.session_frames
+                        self._queue_goal_xp_award()
                         self.save_stats()
+                        if self.is_grand_prix:
+                            self._grand_prix_finish_race()
                         # ライバルも停止モードへ
                         for rival in self.rivals:
                             rival.is_stopping = True
@@ -1202,8 +1246,4 @@ class AppUpdateRaceMixin:
                             })
 
     def update_effects(self):
-        for c in self.clouds:
-            c["x"] += self.velocity * c["speed_factor"] * 10
-            if c["x"] < -100: c["x"] = pyxel.width + 100
-            if c["x"] > pyxel.width + 100: c["x"] = -100
-
+        return
